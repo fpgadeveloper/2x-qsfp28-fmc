@@ -1,0 +1,126 @@
+/* Port configuration overlay for the 2x QSFP28 FMC, single-port (port 0)
+ * 1x100GbE (CAUI-4) reference design on the VCK190.
+ *
+ * The Versal SDT (pl.dtsi) auto-generates the PL nodes from the block
+ * design hierarchy qsfp_i/qsfp_port0/*. The relevant SDT node labels are:
+ *
+ *   qsfp_port0_mrmac       : mrmac@80000000       (Integrated MRMAC, 100G)
+ *   axi_gpio_qsfp0         : gpio@80010000        (QSFP0 sideband, outputs)
+ *   axi_iic_clk            : i2c@80020000         (Si5328 clk gen bus)
+ *   axi_iic_qsfp0          : i2c@80030000         (QSFP0 module I2C bus)
+ *   qsfp_port0_axi_gpio_gt0: gpio@80040000        (GT reset/reset-done ctrl)
+ *   qsfp_port0_axi_mcdma   : axi_mcdma@80050000   (datapath DMA to DDR)
+ *
+ * NOTE: the GT-control GPIO lives INSIDE the qsfp_port0 BD hierarchy, so the
+ * Versal SDT prefixes its label with the hierarchy name (qsfp_port0_*), unlike
+ * axi_gpio_qsfp0 which sits at the top level and keeps its bare label.
+ *
+ * The qsfp_port0_axi_gpio_gt0 dual-channel AXI GPIO is one Linux gpiochip:
+ *   line 0 = gt_reset_all       (out)
+ *   line 1 = gt_reset_tx_datapath(out)
+ *   line 2 = gt_reset_rx_datapath(out)
+ *   lines 3-4 = gt-ctrl-rate      (out, spare)
+ *   line 5 = gt_tx_reset_done    (in)   [channel-2 bit0]
+ *   line 6 = gt_rx_reset_done    (in)   [channel-2 bit1]
+ * The axienet driver uses these to reset the GT and read reset-done, which
+ * fixes the "unable to get GT PLL resource" MAC probe failure.
+ *
+ * Unlike the Quad SFP28 FMC, this FMC has NO PCA9548 I2C mux: the Si5328
+ * and the QSFP0 module each sit on their own dedicated AXI-IIC controller,
+ * so the Si5328 is attached directly under &axi_iic_clk.
+ *
+ * The MRMAC IP is built with internal GT control (xlnx,gt-settings =
+ * "internal"), so there are no external gt_pll / gt_ctrl_common / axi_mux
+ * nodes to reference (unlike the 2022.1 TRD). No PTP on this design.
+ */
+
+/ {
+	ref_si5328: ref_si5328 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <114285000>;
+	};
+};
+
+/* Si5328 jitter-attenuating clock generator on the dedicated clk_i2c bus.
+ * Output clk0 is the 100G CAUI-4 GT reference clock at 322.265625 MHz. */
+&axi_iic_clk {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	fmc_si5328: clock-generator@68 {
+		status = "okay";
+		compatible = "silabs,si5328";
+		reg = <0x68>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#clock-cells = <1>;
+		clocks = <&ref_si5328>;
+		clock-names = "xtal";
+
+		fmc_si5328_clk: clk0@0 {
+			reg = <0>;
+			clock-frequency = <156250000>; /* 100G CAUI-4 GT refclk (LCPLL fractional-N), matches sfp28 FMC */
+		};
+	};
+};
+
+/* MRMAC binding override so the Xilinx AXI Ethernet (axienet) driver
+ * attaches and uses the MCDMA datapath. One port, 100G, no PTP. */
+&qsfp_port0_mrmac {
+	axistream-connected = <&qsfp_port0_axi_mcdma>;
+	/* The axienet MCDMA probe looks up the DMA channel IRQs *by name on this
+	 * (the MRMAC) node*: platform_get_irq_byname(pdev, "mm2s_ch1_introut") /
+	 * "s2mm_ch1_introut" (xilinx_axienet_mcdma.c). interrupt-names alone is
+	 * not enough — the matching interrupts must be present here too, else the
+	 * probe fails with -ENXIO. Copy the MCDMA's ch1 IRQs (GIC SPI 84 mm2s,
+	 * 85 s2mm). Order must match interrupt-names. */
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&gic>;
+	interrupts = <0 84 4>, <0 85 4>;
+	local-mac-address = [00 0a 35 00 00 00];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x20>;
+	xlnx,mrmac-rate = <100000>;
+
+	/* GT reset / reset-done control via the axi_gpio_gt0 dual-channel GPIO.
+	 * The axienet driver requests these gpios (con_id "gt-ctrl" => DT
+	 * property "gt-ctrl-gpios", etc.) to reset the GT and poll reset-done,
+	 * which resolves the "unable to get GT PLL resource" probe failure.
+	 * Line mapping (one gpiochip, #gpio-cells = <2>):
+	 *   0 gt-ctrl, 1 gt-tx-dpath, 2 gt-rx-dpath, 3-4 gt-ctrl-rate,
+	 *   5 gt-tx-rst-done, 6 gt-rx-rst-done. 3rd cell = flags (0 = active-high). */
+	gt-ctrl-gpios        = <&qsfp_port0_axi_gpio_gt0 0 0>;
+	gt-tx-dpath-gpios    = <&qsfp_port0_axi_gpio_gt0 1 0>;
+	gt-rx-dpath-gpios    = <&qsfp_port0_axi_gpio_gt0 2 0>;
+	gt-ctrl-rate-gpios   = <&qsfp_port0_axi_gpio_gt0 3 0>, <&qsfp_port0_axi_gpio_gt0 4 0>;
+	gt-tx-rst-done-gpios = <&qsfp_port0_axi_gpio_gt0 5 0>;
+	gt-rx-rst-done-gpios = <&qsfp_port0_axi_gpio_gt0 6 0>;
+	xlnx,gtlane = <0>;
+};
+
+/* In 1x100GE CAUI-4 mode, MRMAC port 0 bonds all four lanes; ports 1-3 are
+ * not used. The Versal SDT still emits a node per MRMAC port, so disable the
+ * three unused ones to stop the axienet driver from probing phantom MACs. */
+&qsfp_port0_mrmac_1 {
+	status = "disabled";
+};
+&qsfp_port0_mrmac_2 {
+	status = "disabled";
+};
+&qsfp_port0_mrmac_3 {
+	status = "disabled";
+};
+
+/* The Versal SDT tags the MCDMA node with compatible "xlnx,axi-mcdma-1.00.a",
+ * which the standalone xilinx_dma dmaengine driver binds to and claims the
+ * MCDMA register region — so the axienet MRMAC driver's own ioremap of the
+ * MCDMA fails with -EBUSY ("can't request region ... ioremap failed for the
+ * dma"). axienet locates the MCDMA via the axistream-connected phandle (not by
+ * compatible) and reads reg/interrupts/include-dre/addrwidth directly, so we
+ * override the compatible to "xlnx,eth-dma" (matched by no dmaengine driver),
+ * leaving the MCDMA solely for axienet. */
+&qsfp_port0_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};
