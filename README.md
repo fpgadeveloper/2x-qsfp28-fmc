@@ -8,6 +8,8 @@ on AMD Versal adaptive SoC development boards. Each QSFP28 port is driven by the
 with packet data moved to/from DDR by an AXI MCDMA and driven under PetaLinux by the AXI Ethernet
 driver.
 
+![2x QSFP28 FMC with VCK190](docs/source/images/vck190-with-2x-qsfp28-fmc_03.jpg "2x QSFP28 FMC with VCK190")
+
 Important links:
 
 * The user guide for these reference designs is hosted here: [100G Ethernet for 2x QSFP28 FMC docs](https://qsfp28.ethernetfmc.com "100G Ethernet for 2x QSFP28 FMC docs")
