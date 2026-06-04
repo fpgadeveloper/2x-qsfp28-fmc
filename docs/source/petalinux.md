@@ -8,7 +8,8 @@ of the repository.
 To build the PetaLinux project, you will need a physical or virtual machine running one of the 
 [supported Linux distributions] with Vivado 2025.2 and PetaLinux Tools 2025.2 installed.
 
-```{attention} You cannot build the PetaLinux project in the Windows operating system. Windows
+```{attention}
+You cannot build the PetaLinux project in the Windows operating system. Windows
 users are advised to use a Linux virtual machine to build the PetaLinux project.
 ```
 
@@ -51,7 +52,8 @@ Once the build process is complete, you must prepare the SD card for booting Pet
      like `/dev/sdX`, where `X` is a letter such as a,b,c,d, etc. Note that you should replace
      the `X` in the following instructions.
      
-```{warning} Do not continue these steps until you are certain that you have found the correct
+```{warning}
+Do not continue these steps until you are certain that you have found the correct
 device name for the SD card. If you use the wrong device name in the following steps, you risk
 losing data on one of your hard drives.
 ```
@@ -86,7 +88,8 @@ losing data on one of your hard drives.
    
    Once the `sync` command returns, you will be able to eject the SD card from the machine.
 
-```{tip} The `bootimages/` directory of the repo (and the release zip) contains the boot files
+```{tip}
+The `bootimages/` directory of the repo (and the release zip) contains the boot files
 already arranged into `boot/` and `root/` folders, so you can simply copy the contents of `boot/`
 to the FAT32 partition and extract `root/rootfs.tar.gz` to the ext4 partition.
 ```
@@ -105,14 +108,16 @@ The default login is username `petalinux`; on first login you will be prompted t
 
 ## Boot via JTAG
 
-```{tip} You need to install the cable drivers before being able to boot via JTAG.
+```{tip}
+You need to install the cable drivers before being able to boot via JTAG.
 Note that the Vitis installer does not automatically install the cable drivers, it must be done separately.
 For instructions, read section 
 [installing the cable drivers](https://docs.amd.com/r/en-US/ug973-vivado-release-notes-install-license/Installing-Cable-Drivers) 
 from the Vivado release notes.
 ```
 
-```{warning} The Versal design stores the root filesystem on the SD card, so you must still
+```{warning}
+The Versal design stores the root filesystem on the SD card, so you must still
 prepare and connect the SD card before booting via JTAG. If you boot via JTAG without the SD card,
 the boot will hang at a message similar to: `Waiting for root device /dev/mmcblk0p2...`
 ```
@@ -277,7 +282,8 @@ reverse). The 2x QSFP28 FMC ports connect at 100G, but single-stream throughput 
 SoCs is **CPU-bound** — the path traverses the kernel TCP/IP stack and the single-queue
 `xilinx_axienet` MCDMA driver on a Cortex-A72 — so the measured figures are far below line rate.
 
-```{note} The iperf3 figures below are placeholders. They will be filled in once a two-endpoint
+```{note}
+The iperf3 figures below are placeholders. They will be filled in once a two-endpoint
 100G measurement has been captured on hardware (a 100G-capable link partner, e.g. a host PC with a
 100G NIC, connected to the QSFP28 port with a DAC or optical module).
 ```

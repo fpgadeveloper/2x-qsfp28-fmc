@@ -10,6 +10,7 @@ driver.
 
 Important links:
 
+* The user guide for these reference designs is hosted here: [100G Ethernet for 2x QSFP28 FMC docs](https://qsfp28.ethernetfmc.com "100G Ethernet for 2x QSFP28 FMC docs")
 * To report a bug: [Report an issue](https://github.com/fpgadeveloper/2x-qsfp28-fmc/issues "Report an issue").
 * For technical support: [Contact Opsero](https://opsero.com/contact-us "Contact Opsero").
 * To purchase the mezzanine card: [2x QSFP28 FMC order page](https://opsero.com/product/2x-qsfp28-fmc "2x QSFP28 FMC order page").

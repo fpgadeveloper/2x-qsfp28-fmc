@@ -50,7 +50,8 @@ Notes:
 Windows users will be able to build the Vivado project, however Linux is required to build the
 PetaLinux project.
 
-```{tip} If you wish to build the PetaLinux project,
+```{tip}
+If you wish to build the PetaLinux project,
 we recommend that you build the entire project (including the Vivado project) on a machine (either 
 physical or virtual) running one of the [supported Linux distributions].
 ```
@@ -74,7 +75,8 @@ physical or virtual) running one of the [supported Linux distributions].
 This project can be built using a machine (either physical or virtual) with one of the 
 [supported Linux distributions].
 
-```{tip} The build steps can be completed in the order shown below, or
+```{tip}
+The build steps can be completed in the order shown below, or
 you can go directly to the [build PetaLinux](#build-petalinux-project-in-linux) instructions below
 to build the Vivado and PetaLinux projects with a single command.
 ```
