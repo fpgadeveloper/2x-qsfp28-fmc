@@ -60,7 +60,7 @@
 
 		fmc_si5328_clk: clk0@0 {
 			reg = <0>;
-			clock-frequency = <156250000>; /* 100G CAUI-4 GT refclk (LCPLL fractional-N), matches sfp28 FMC */
+			clock-frequency = <322265625>; /* 100G CAUI-4 GT refclk (322.265625 MHz, LCPLL integer-N; matches AMD TRD) */
 		};
 	};
 };
@@ -82,6 +82,13 @@
 	xlnx,channel-ids = "1";
 	xlnx,num-queues = /bits/ 16 <0x1>;
 	xlnx,addrwidth = <0x20>;
+	/* The auto-generated pl.dtsi emits max-speed = <25000> (the per-lane GT
+	 * rate) on this node. The axienet driver reads "max-speed" FIRST and only
+	 * falls back to "xlnx,mrmac-rate" if max-speed is absent, so without this
+	 * override the MAC comes up as 25G single-lane (lane 0 only) instead of
+	 * 100G CAUI-4. Force 100G so the driver matches the 1x100GE MRMAC IP and
+	 * bonds all four lanes. (xlnx,mrmac-rate kept for older-driver fallback.) */
+	max-speed = <100000>;
 	xlnx,mrmac-rate = <100000>;
 
 	/* GT reset / reset-done control via the axi_gpio_gt0 dual-channel GPIO.

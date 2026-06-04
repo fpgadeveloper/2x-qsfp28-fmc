@@ -205,54 +205,200 @@ connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_smc/aclk]
 connect_bd_net [get_bd_pins rst_100m/interconnect_aresetn] [get_bd_pins axi_smc/aresetn]
 connect_bd_intf_net [get_bd_intf_pins versal_cips_0/M_AXI_LPD] [get_bd_intf_pins axi_smc/S00_AXI]
 
-# GT ref clock (156.25 MHz, from the FMC Si5328) and utility buffer.
-# 156.25 MHz matches the proven Opsero FMC / sfp28-fmc-xxv bring-up on this
-# board; the GT LCPLL uses fractional-N to reach 25.78125 Gb/s from it.
+# GT ref clock (322.265625 MHz, from the FMC Si5328) and utility buffer.
+# 322.265625 MHz + LCPLL integer-N replicates the AMD VCK190 Ethernet TRD's
+# proven MRMAC GT config (see the gt_quad_base PROT0 settings below).
 create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 gt_ref_clk_0
-set_property CONFIG.FREQ_HZ 156250000 [get_bd_intf_ports /gt_ref_clk_0]
+set_property CONFIG.FREQ_HZ 322265625 [get_bd_intf_ports /gt_ref_clk_0]
 create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf util_ds_buf_0
 set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} [get_bd_cells util_ds_buf_0]
 connect_bd_intf_net [get_bd_intf_ports gt_ref_clk_0] [get_bd_intf_pins util_ds_buf_0/CLK_IN_D]
 
 # GT Quad base (Transceiver wizard), GTY, 4 lanes bonded for 100G CAUI-4.
-# The 4 lanes each run at 25.78125 Gb/s (raw) off the 156.25 MHz refclk;
+# The 4 lanes each run at 25.78125 Gb/s (raw) off the 322.265625 MHz refclk;
 # lane bonding into a single 100G MAC happens inside the MRMAC core.
 create_bd_cell -type ip -vlnv xilinx.com:ip:gt_quad_base gt_quad_base_0
 
-# Configure PROT0 = 4 lanes, Ethernet 25G RAW, refclk 156.25 MHz.
-# We start from the IP default LR0 settings dict and override the fields
-# that differ for the MRMAC 100G use case (line rate, refclk, data widths,
-# progdiv/outclk source) - matching the generated MRMAC GT wizard config.
+# Configure PROT0 = 4 lanes for the MRMAC by replicating the AMD VCK190
+# Ethernet TRD's exact gt_quad_base PROT0_LR0_SETTINGS (PRESET None, 80-bit
+# RAW, 25.78125 Gb/s, LCPLL integer-N, 322.265625 MHz refclk). The MRMAC needs
+# an 80-bit RAW GT datapath that no named Ethernet preset provides - which is
+# why the TRD sets PRESET None and specifies every field manually. We merge the
+# TRD's field set onto THIS IP version's default LR0 dict, applying only field
+# names that still exist in the 2025.2 gt_quad_base (so any 2022.1-only fields
+# are silently dropped instead of erroring).
+set trd_gt {
+  PRESET None
+  RX_PAM_SEL NRZ
+  TX_PAM_SEL NRZ
+  RX_GRAY_BYP true
+  TX_GRAY_BYP true
+  RX_GRAY_LITTLEENDIAN true
+  TX_GRAY_LITTLEENDIAN true
+  RX_PRECODE_BYP true
+  TX_PRECODE_BYP true
+  RX_PRECODE_LITTLEENDIAN false
+  TX_PRECODE_LITTLEENDIAN false
+  INTERNAL_PRESET None
+  GT_TYPE GTY
+  GT_DIRECTION DUPLEX
+  TX_LINE_RATE 25.78125
+  TX_PLL_TYPE LCPLL
+  TX_REFCLK_FREQUENCY 322.265625
+  TX_ACTUAL_REFCLK_FREQUENCY 322.265625000000
+  TX_FRACN_ENABLED false
+  TX_FRACN_NUMERATOR 0
+  TX_REFCLK_SOURCE R0
+  TX_DATA_ENCODING RAW
+  TX_USER_DATA_WIDTH 80
+  TX_INT_DATA_WIDTH 80
+  TX_BUFFER_MODE 1
+  TX_BUFFER_BYPASS_MODE Fast_Sync
+  TX_PIPM_ENABLE false
+  TX_OUTCLK_SOURCE TXPROGDIVCLK
+  TXPROGDIV_FREQ_ENABLE true
+  TXPROGDIV_FREQ_SOURCE LCPLL
+  TXPROGDIV_FREQ_VAL 644.531
+  TX_DIFF_SWING_EMPH_MODE CUSTOM
+  TX_64B66B_SCRAMBLER false
+  TX_64B66B_ENCODER false
+  TX_64B66B_CRC false
+  TX_RATE_GROUP A
+  RX_LINE_RATE 25.78125
+  RX_PLL_TYPE LCPLL
+  RX_REFCLK_FREQUENCY 322.265625
+  RX_ACTUAL_REFCLK_FREQUENCY 322.265625000000
+  RX_FRACN_ENABLED false
+  RX_FRACN_NUMERATOR 0
+  RX_REFCLK_SOURCE R0
+  RX_DATA_DECODING RAW
+  RX_USER_DATA_WIDTH 80
+  RX_INT_DATA_WIDTH 80
+  RX_BUFFER_MODE 1
+  RX_OUTCLK_SOURCE RXPROGDIVCLK
+  RXPROGDIV_FREQ_ENABLE true
+  RXPROGDIV_FREQ_SOURCE LCPLL
+  RXPROGDIV_FREQ_VAL 644.531
+  INS_LOSS_NYQ 20
+  RX_EQ_MODE AUTO
+  RX_COUPLING AC
+  RX_TERMINATION PROGRAMMABLE
+  RX_RATE_GROUP A
+  RX_TERMINATION_PROG_VALUE 800
+  RX_PPM_OFFSET 0
+  RX_64B66B_DESCRAMBLER false
+  RX_64B66B_DECODER false
+  RX_64B66B_CRC false
+  OOB_ENABLE false
+  RX_COMMA_ALIGN_WORD 1
+  RX_COMMA_SHOW_REALIGN_ENABLE true
+  PCIE_ENABLE false
+  TX_LANE_DESKEW_HDMI_ENABLE false
+  RX_COMMA_P_ENABLE false
+  RX_COMMA_M_ENABLE false
+  RX_COMMA_DOUBLE_ENABLE false
+  RX_COMMA_P_VAL 0101111100
+  RX_COMMA_M_VAL 1010000011
+  RX_COMMA_MASK 0000000000
+  RX_SLIDE_MODE OFF
+  RX_SSC_PPM 0
+  RX_CB_NUM_SEQ 0
+  RX_CB_LEN_SEQ 1
+  RX_CB_MAX_SKEW 1
+  RX_CB_MAX_LEVEL 1
+  RX_CB_MASK_0_0 false
+  RX_CB_VAL_0_0 0000000000
+  RX_CB_K_0_0 false
+  RX_CB_DISP_0_0 false
+  RX_CB_MASK_0_1 false
+  RX_CB_VAL_0_1 0000000000
+  RX_CB_K_0_1 false
+  RX_CB_DISP_0_1 false
+  RX_CB_MASK_0_2 false
+  RX_CB_VAL_0_2 0000000000
+  RX_CB_K_0_2 false
+  RX_CB_DISP_0_2 false
+  RX_CB_MASK_0_3 false
+  RX_CB_VAL_0_3 0000000000
+  RX_CB_K_0_3 false
+  RX_CB_DISP_0_3 false
+  RX_CB_MASK_1_0 false
+  RX_CB_VAL_1_0 0000000000
+  RX_CB_K_1_0 false
+  RX_CB_DISP_1_0 false
+  RX_CB_MASK_1_1 false
+  RX_CB_VAL_1_1 0000000000
+  RX_CB_K_1_1 false
+  RX_CB_DISP_1_1 false
+  RX_CB_MASK_1_2 false
+  RX_CB_VAL_1_2 0000000000
+  RX_CB_K_1_2 false
+  RX_CB_DISP_1_2 false
+  RX_CB_MASK_1_3 false
+  RX_CB_VAL_1_3 0000000000
+  RX_CB_K_1_3 false
+  RX_CB_DISP_1_3 false
+  RX_CC_NUM_SEQ 0
+  RX_CC_LEN_SEQ 1
+  RX_CC_PERIODICITY 5000
+  RX_CC_KEEP_IDLE DISABLE
+  RX_CC_PRECEDENCE ENABLE
+  RX_CC_REPEAT_WAIT 0
+  RX_CC_VAL 00000000000000000000000000000000000000000000000000000000000000000000000000000000
+  RX_CC_MASK_0_0 false
+  RX_CC_VAL_0_0 0000000000
+  RX_CC_K_0_0 false
+  RX_CC_DISP_0_0 false
+  RX_CC_MASK_0_1 false
+  RX_CC_VAL_0_1 0000000000
+  RX_CC_K_0_1 false
+  RX_CC_DISP_0_1 false
+  RX_CC_MASK_0_2 false
+  RX_CC_VAL_0_2 0000000000
+  RX_CC_K_0_2 false
+  RX_CC_DISP_0_2 false
+  RX_CC_MASK_0_3 false
+  RX_CC_VAL_0_3 0000000000
+  RX_CC_K_0_3 false
+  RX_CC_DISP_0_3 false
+  RX_CC_MASK_1_0 false
+  RX_CC_VAL_1_0 0000000000
+  RX_CC_K_1_0 false
+  RX_CC_DISP_1_0 false
+  RX_CC_MASK_1_1 false
+  RX_CC_VAL_1_1 0000000000
+  RX_CC_K_1_1 false
+  RX_CC_DISP_1_1 false
+  RX_CC_MASK_1_2 false
+  RX_CC_VAL_1_2 0000000000
+  RX_CC_K_1_2 false
+  RX_CC_DISP_1_2 false
+  RX_CC_MASK_1_3 false
+  RX_CC_VAL_1_3 0000000000
+  RX_CC_K_1_3 false
+  RX_CC_DISP_1_3 false
+  PCIE_USERCLK2_FREQ 250
+  PCIE_USERCLK_FREQ 250
+  RX_JTOL_FC 10
+  RX_JTOL_LF_SLOPE -20
+  RX_BUFFER_BYPASS_MODE Fast_Sync
+  RX_BUFFER_BYPASS_MODE_LANE MULTI
+  RX_BUFFER_RESET_ON_CB_CHANGE ENABLE
+  RX_BUFFER_RESET_ON_COMMAALIGN DISABLE
+  RX_BUFFER_RESET_ON_RATE_CHANGE ENABLE
+  TX_BUFFER_RESET_ON_RATE_CHANGE ENABLE
+  RESET_SEQUENCE_INTERVAL 0
+  RX_COMMA_PRESET NONE
+  RX_COMMA_VALID_ONLY 0
+}
 set_property -dict [list \
   CONFIG.PROT0_LR0_SETTINGS.VALUE_MODE MANUAL \
   CONFIG.PROT0_NO_OF_LANES.VALUE_MODE MANUAL \
 ] [get_bd_cells gt_quad_base_0]
 array set gtset [get_property CONFIG.PROT0_LR0_SETTINGS [get_bd_cells gt_quad_base_0]]
-set gtset(PRESET) GTY-Ethernet_25G_RAW
-set gtset(INTERNAL_PRESET) Ethernet_25G_RAW
-set gtset(TX_LINE_RATE) 25.78125
-set gtset(RX_LINE_RATE) 25.78125
-set gtset(TX_REFCLK_FREQUENCY) 156.25
-set gtset(RX_REFCLK_FREQUENCY) 156.25
-set gtset(TX_ACTUAL_REFCLK_FREQUENCY) 156.250000000000
-set gtset(RX_ACTUAL_REFCLK_FREQUENCY) 156.250000000000
-# Fractional-N PLL is required to derive 25.78125 Gb/s from a 156.25 MHz
-# refclk (integer-N only works from 322.265625). This matches the LCPLL +
-# FRACN config the sfp28-fmc-xxv design uses for 25G on this FMC.
-set gtset(TX_FRACN_ENABLED) true
-set gtset(RX_FRACN_ENABLED) true
-set gtset(TX_USER_DATA_WIDTH) 80
-set gtset(RX_USER_DATA_WIDTH) 80
-set gtset(TX_INT_DATA_WIDTH) 80
-set gtset(RX_INT_DATA_WIDTH) 80
-set gtset(TX_OUTCLK_SOURCE) TXPROGDIVCLK
-set gtset(RX_OUTCLK_SOURCE) RXPROGDIVCLK
-set gtset(TXPROGDIV_FREQ_ENABLE) true
-set gtset(RXPROGDIV_FREQ_ENABLE) true
-set gtset(TXPROGDIV_FREQ_VAL) 644.531
-set gtset(RXPROGDIV_FREQ_VAL) 644.531
-set gtset(RXRECCLK_FREQ_ENABLE) true
-set gtset(RXRECCLK_FREQ_VAL) 644.531
+foreach {k v} $trd_gt {
+  if {[info exists gtset($k)]} { set gtset($k) $v }
+}
 set_property -dict [list \
   CONFIG.PROT0_LR0_SETTINGS [array get gtset] \
   CONFIG.PROT0_NO_OF_LANES {4} \
@@ -328,20 +474,20 @@ proc create_qsfp_port {label} {
   # interface pins (gt_*_serdes_interface_*) that connect directly to
   # gt_quad_base TXn/RXn_GT_IP_Interface (same VLNV).
   set_property CONFIG.MRMAC_IS_GT_WIZ_OLD {1} [get_bd_cells mrmac]
-  # GT reference clock = 156.25 MHz (the FMC Si5328 output; matches sfp28).
-  # Default MRMAC refclk is 322.265625 - override it (and the per-channel
-  # refclks) to 156.25 so the MRMAC and gt_quad_base agree. Line rate stays
-  # 25.78125 Gb/s (LCPLL fractional-N).
+  # GT reference clock = 322.265625 MHz (the FMC Si5328 output) - matches the
+  # AMD TRD's MRMAC GT config. Set it (and the per-channel refclks) explicitly
+  # so the MRMAC and gt_quad_base agree. Line rate stays 25.78125 Gb/s
+  # (LCPLL integer-N).
   set_property -dict [list \
-    CONFIG.GT_REF_CLK_FREQ_C0 {156.25} \
-    CONFIG.GT_CH0_RX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH0_TX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH1_RX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH1_TX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH2_RX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH2_TX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH3_RX_REFCLK_FREQUENCY_C0 {156.25} \
-    CONFIG.GT_CH3_TX_REFCLK_FREQUENCY_C0 {156.25} \
+    CONFIG.GT_REF_CLK_FREQ_C0 {322.265625} \
+    CONFIG.GT_CH0_RX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH0_TX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH1_RX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH1_TX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH2_RX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH2_TX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH3_RX_REFCLK_FREQUENCY_C0 {322.265625} \
+    CONFIG.GT_CH3_TX_REFCLK_FREQUENCY_C0 {322.265625} \
   ] [get_bd_cells mrmac]
 
   # NOTE: mrmac/s_axi_aclk (sys_clk, 100MHz) is connected at the very END of
@@ -361,34 +507,88 @@ proc create_qsfp_port {label} {
   }
 
   #########################################################
-  # Per-channel user clock buffers (txoutclk/rxoutclk -> usrclk)
+  # Per-channel user clock buffers (GT outclk -> usrclk + usrclk/2)
   #########################################################
-  # One BUFG_GT per channel buffers the GT out clock into the usrclk that the
-  # gt_quad_base requires on its chN_*usrclk inputs. For the MRMAC core/serdes
-  # and AXIS client clock buses (each 4-bit, with all four lanes bonded into a
-  # single 100G client) we drive the bus ports directly from a SINGLE scalar
-  # clock net. Vivado broadcasts the scalar net to all 4 bits and treats it as
-  # one clock domain, so the MRMAC client AXIS resolves to a single-segment
-  # PHASE (driving the bus from a 4-way ilconcat makes Vivado treat it as four
-  # distinct domains and the 384b client reports a 4-segment PHASE that no
-  # standard single-segment AXIS IP can connect to).
-  foreach ch {0 1 2 3} {
-    # Let the BUFG_GT output frequency propagate from the GT (txoutclk/rxoutclk).
-    create_bd_cell -type ip -vlnv xilinx.com:ip:bufg_gt bufg_gt_tx$ch
-    connect_bd_net [get_bd_pins ch${ch}_txoutclk] [get_bd_pins bufg_gt_tx$ch/outclk]
-    connect_bd_net [get_bd_pins bufg_gt_tx$ch/usrclk] [get_bd_pins ch${ch}_txusrclk]
+  # CAUI-4 GT clocking - replicates BOTH AMD references (the MRMAC 1x100GE
+  # CAUI-4 IP example design and the vck190 ethernet TRD), which wire it
+  # identically:
+  #   RX: each of the 4 GT lanes recovers its OWN clock, so each lane gets its
+  #       own pair of BUFG_GTs - a full-rate "usrclk" and a half-rate "usrclk2"
+  #       (the BUFG_GT /2 divided output). The MRMAC rx_serdes_clk/rx_core_clk
+  #       buses take the per-lane FULL-rate clocks; rx_alt_serdes_clk takes the
+  #       per-lane HALF-rate clocks; the GT's own chN_rxusrclk input takes the
+  #       per-lane HALF-rate clock.
+  #   TX: all 4 lanes share the TX PLL, so a single ch0 pair drives all four TX
+  #       lanes. tx_core_clk = ch0 FULL-rate x4; tx_alt_serdes_clk and the GT
+  #       chN_txusrclk inputs = ch0 HALF-rate.
+  # The MRMAC clock buses are 4-bit; driving them from a 4-way ilconcat is
+  # correct here (these are internal GT/MRMAC clocks, NOT the AXIS client clock,
+  # so the old single-segment-PHASE concern - which only applies to the AXIS
+  # client tx_axi_clk/rx_axi_clk - does not apply). The previous design drove
+  # rx_serdes_clk/rx_core_clk from ch0 alone, leaving lanes 1-3 sampled in the
+  # wrong recovered-clock domain: those PCS lanes never block-lock and 100G
+  # alignment never completes, even with a passive loopback.
 
+  # /2 divider value for the half-rate (usrclk2) BUFG_GT outputs.
+  # BUFG_GT divides by (gt_bufgtdiv + 1), so a value of 1 gives /2.
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant bufg_gt_div_val
+  set_property -dict [list CONFIG.CONST_WIDTH {3} CONFIG.CONST_VAL {1}] [get_bd_cells bufg_gt_div_val]
+
+  # RX: per-lane full-rate + half-rate buffers
+  foreach ch {0 1 2 3} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:bufg_gt bufg_gt_rx$ch
     connect_bd_net [get_bd_pins ch${ch}_rxoutclk] [get_bd_pins bufg_gt_rx$ch/outclk]
-    connect_bd_net [get_bd_pins bufg_gt_rx$ch/usrclk] [get_bd_pins ch${ch}_rxusrclk]
+
+    create_bd_cell -type ip -vlnv xilinx.com:ip:bufg_gt bufg_gt_rx_div2_$ch
+    connect_bd_net [get_bd_pins ch${ch}_rxoutclk] [get_bd_pins bufg_gt_rx_div2_$ch/outclk]
+    connect_bd_net [get_bd_pins bufg_gt_div_val/dout] [get_bd_pins bufg_gt_rx_div2_$ch/gt_bufgtdiv]
+    # GT chN_rxusrclk takes the per-lane HALF-rate clock
+    connect_bd_net [get_bd_pins bufg_gt_rx_div2_$ch/usrclk] [get_bd_pins ch${ch}_rxusrclk]
   }
 
-  # MRMAC core/serdes clocks driven from ch0's user clocks (scalar -> 4-bit bus).
-  connect_bd_net [get_bd_pins bufg_gt_rx0/usrclk] [get_bd_pins mrmac/rx_core_clk]
-  connect_bd_net [get_bd_pins bufg_gt_rx0/usrclk] [get_bd_pins mrmac/rx_serdes_clk]
-  connect_bd_net [get_bd_pins bufg_gt_rx0/usrclk] [get_bd_pins mrmac/rx_alt_serdes_clk]
-  connect_bd_net [get_bd_pins bufg_gt_tx0/usrclk] [get_bd_pins mrmac/tx_core_clk]
-  connect_bd_net [get_bd_pins bufg_gt_tx0/usrclk] [get_bd_pins mrmac/tx_alt_serdes_clk]
+  # TX: single ch0 full-rate + half-rate buffers feed all four TX lanes
+  create_bd_cell -type ip -vlnv xilinx.com:ip:bufg_gt bufg_gt_tx0
+  connect_bd_net [get_bd_pins ch0_txoutclk] [get_bd_pins bufg_gt_tx0/outclk]
+  create_bd_cell -type ip -vlnv xilinx.com:ip:bufg_gt bufg_gt_tx_div2_0
+  connect_bd_net [get_bd_pins ch0_txoutclk] [get_bd_pins bufg_gt_tx_div2_0/outclk]
+  connect_bd_net [get_bd_pins bufg_gt_div_val/dout] [get_bd_pins bufg_gt_tx_div2_0/gt_bufgtdiv]
+  # All four GT chN_txusrclk inputs take ch0's HALF-rate clock
+  foreach ch {0 1 2 3} {
+    connect_bd_net [get_bd_pins bufg_gt_tx_div2_0/usrclk] [get_bd_pins ch${ch}_txusrclk]
+  }
+
+  # MRMAC RX core + serdes clocks = per-lane FULL-rate, 4-bit bus {ch3,ch2,ch1,ch0}
+  create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 rx_serdes_clk_cat
+  set_property CONFIG.NUM_PORTS {4} [get_bd_cells rx_serdes_clk_cat]
+  foreach ch {0 1 2 3} {
+    connect_bd_net [get_bd_pins bufg_gt_rx$ch/usrclk] [get_bd_pins rx_serdes_clk_cat/In$ch]
+  }
+  connect_bd_net [get_bd_pins rx_serdes_clk_cat/dout] [get_bd_pins mrmac/rx_core_clk]
+  connect_bd_net [get_bd_pins rx_serdes_clk_cat/dout] [get_bd_pins mrmac/rx_serdes_clk]
+
+  # MRMAC RX alt-serdes clock = per-lane HALF-rate, 4-bit bus {ch3,ch2,ch1,ch0}
+  create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 rx_alt_serdes_clk_cat
+  set_property CONFIG.NUM_PORTS {4} [get_bd_cells rx_alt_serdes_clk_cat]
+  foreach ch {0 1 2 3} {
+    connect_bd_net [get_bd_pins bufg_gt_rx_div2_$ch/usrclk] [get_bd_pins rx_alt_serdes_clk_cat/In$ch]
+  }
+  connect_bd_net [get_bd_pins rx_alt_serdes_clk_cat/dout] [get_bd_pins mrmac/rx_alt_serdes_clk]
+
+  # MRMAC TX core clock = ch0 FULL-rate on all four lanes
+  create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 tx_core_clk_cat
+  set_property CONFIG.NUM_PORTS {4} [get_bd_cells tx_core_clk_cat]
+  foreach ch {0 1 2 3} {
+    connect_bd_net [get_bd_pins bufg_gt_tx0/usrclk] [get_bd_pins tx_core_clk_cat/In$ch]
+  }
+  connect_bd_net [get_bd_pins tx_core_clk_cat/dout] [get_bd_pins mrmac/tx_core_clk]
+
+  # MRMAC TX alt-serdes clock = ch0 HALF-rate on all four lanes
+  create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 tx_alt_serdes_clk_cat
+  set_property CONFIG.NUM_PORTS {4} [get_bd_cells tx_alt_serdes_clk_cat]
+  foreach ch {0 1 2 3} {
+    connect_bd_net [get_bd_pins bufg_gt_tx_div2_0/usrclk] [get_bd_pins tx_alt_serdes_clk_cat/In$ch]
+  }
+  connect_bd_net [get_bd_pins tx_alt_serdes_clk_cat/dout] [get_bd_pins mrmac/tx_alt_serdes_clk]
 
   #########################################################
   # MRMAC AXIS client clocks (390.625MHz) - tx_axi_clk/rx_axi_clk (4-bit bus,
