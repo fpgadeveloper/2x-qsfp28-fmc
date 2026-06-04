@@ -1,0 +1,103 @@
+/* Port configuration overlay for the 2x QSFP28 FMC, BOTH ports (0 and 1),
+ * each a 1x100GbE (CAUI-4) MRMAC on the VCK190.
+ *
+ * SDT node labels (qsfp_i/qsfp_port<N>/* hierarchy) and addresses:
+ *   qsfp_port0_mrmac        : mrmac@80000000     qsfp_port1_mrmac        : mrmac@80010000
+ *   qsfp_port0_axi_mcdma    : axi_mcdma@80080000  qsfp_port1_axi_mcdma   : axi_mcdma@800a0000
+ *   qsfp_port0_axi_gpio_gt0 : gpio@80070000      qsfp_port1_axi_gpio_gt1 : gpio@80090000
+ *   axi_gpio_qsfp0          : gpio@80020000      axi_gpio_qsfp1          : gpio@80030000
+ *   axi_iic_clk             : i2c@80040000  (shared Si5328 clock bus)
+ *   axi_iic_qsfp0           : i2c@80050000      axi_iic_qsfp1           : i2c@80060000
+ *
+ * One Si5328 jitter-attenuating clock generator (on axi_iic_clk) sources BOTH
+ * GT reference clocks (GBTCLK0 -> port 0, GBTCLK1 -> port 1); a single clk0@0
+ * node programs the device (its two outputs both emit 322.265625 MHz). See the
+ * Phase 1 single-port overlay (ports-versal-0) for the per-binding rationale
+ * (gt-*-gpios for GT reset/PLL, eth-dma MCDMA override, max-speed=100000).
+ */
+
+/ {
+	ref_si5328: ref_si5328 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <114285000>;
+	};
+};
+
+/* Si5328 jitter-attenuating clock generator on the shared clk_i2c bus.
+ * Programming it brings up both GBTCLK0 (322.265625 MHz, port 0 GT refclk) and
+ * GBTCLK1 (port 1 GT refclk). */
+&axi_iic_clk {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	fmc_si5328: clock-generator@68 {
+		status = "okay";
+		compatible = "silabs,si5328";
+		reg = <0x68>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#clock-cells = <1>;
+		clocks = <&ref_si5328>;
+		clock-names = "xtal";
+
+		fmc_si5328_clk: clk0@0 {
+			reg = <0>;
+			clock-frequency = <322265625>; /* 100G CAUI-4 GT refclk (322.265625 MHz, LCPLL integer-N) */
+		};
+	};
+};
+
+/* ----- QSFP port 0 (FMC slot 0, DP0-3) ----- */
+&qsfp_port0_mrmac {
+	axistream-connected = <&qsfp_port0_axi_mcdma>;
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&gic>;
+	interrupts = <0 84 4>, <0 85 4>; /* port 0 MCDMA mm2s/s2mm (pl_ps_irq0/1) */
+	local-mac-address = [00 0a 35 00 00 00];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x20>;
+	max-speed = <100000>;
+	xlnx,mrmac-rate = <100000>;
+	gt-ctrl-gpios        = <&qsfp_port0_axi_gpio_gt0 0 0>;
+	gt-tx-dpath-gpios    = <&qsfp_port0_axi_gpio_gt0 1 0>;
+	gt-rx-dpath-gpios    = <&qsfp_port0_axi_gpio_gt0 2 0>;
+	gt-ctrl-rate-gpios   = <&qsfp_port0_axi_gpio_gt0 3 0>, <&qsfp_port0_axi_gpio_gt0 4 0>;
+	gt-tx-rst-done-gpios = <&qsfp_port0_axi_gpio_gt0 5 0>;
+	gt-rx-rst-done-gpios = <&qsfp_port0_axi_gpio_gt0 6 0>;
+	xlnx,gtlane = <0>;
+};
+&qsfp_port0_mrmac_1 { status = "disabled"; };
+&qsfp_port0_mrmac_2 { status = "disabled"; };
+&qsfp_port0_mrmac_3 { status = "disabled"; };
+&qsfp_port0_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};
+
+/* ----- QSFP port 1 (FMC slot 1, DP4-7) ----- */
+&qsfp_port1_mrmac {
+	axistream-connected = <&qsfp_port1_axi_mcdma>;
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&gic>;
+	interrupts = <0 87 4>, <0 88 4>; /* port 1 MCDMA mm2s/s2mm (pl_ps_irq3/4) */
+	local-mac-address = [00 0a 35 00 00 01];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x20>;
+	max-speed = <100000>;
+	xlnx,mrmac-rate = <100000>;
+	gt-ctrl-gpios        = <&qsfp_port1_axi_gpio_gt1 0 0>;
+	gt-tx-dpath-gpios    = <&qsfp_port1_axi_gpio_gt1 1 0>;
+	gt-rx-dpath-gpios    = <&qsfp_port1_axi_gpio_gt1 2 0>;
+	gt-ctrl-rate-gpios   = <&qsfp_port1_axi_gpio_gt1 3 0>, <&qsfp_port1_axi_gpio_gt1 4 0>;
+	gt-tx-rst-done-gpios = <&qsfp_port1_axi_gpio_gt1 5 0>;
+	gt-rx-rst-done-gpios = <&qsfp_port1_axi_gpio_gt1 6 0>;
+	xlnx,gtlane = <0>;
+};
+&qsfp_port1_mrmac_1 { status = "disabled"; };
+&qsfp_port1_mrmac_2 { status = "disabled"; };
+&qsfp_port1_mrmac_3 { status = "disabled"; };
+&qsfp_port1_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};

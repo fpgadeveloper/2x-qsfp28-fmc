@@ -36,7 +36,7 @@ set_param board.repoPaths [get_property LOCAL_ROOT_DIR [xhub::get_xstores xilinx
 # Possible targets
 # UPDATER START
 # 100G designs
-dict set target_dict vck190_fmcp1 { xilinx.com vck190 versal { 0 } "100" }
+dict set target_dict vck190_fmcp1 { xilinx.com vck190 versal { 0 1 } "100" }
 # UPDATER END
 
 # Function to display the options and get user input

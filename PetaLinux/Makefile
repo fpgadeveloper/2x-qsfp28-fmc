@@ -14,7 +14,7 @@ JOBS ?= 8
 # valid targets (template name, flash size, flash interface, port config)
 # UPDATER START
 # 100G designs
-vck190_fmcp1_target := versal 0 0 ports-versal-0
+vck190_fmcp1_target := versal 0 0 ports-versal-01
 # UPDATER END
 
 TARGET_LIST := $(sort $(patsubst %_target,%,$(filter %_target,$(.VARIABLES))))

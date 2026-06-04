@@ -16,7 +16,8 @@
       "url": "xilinx.com",
       "boardname": "vck190",
       "lanes": [
-        "0"
+        "0",
+        "1"
       ],
       "linkspeed": "100",
       "connector": "FMCP1",

@@ -173,12 +173,10 @@ connect_bd_net [get_bd_pins versal_cips_0/pl0_ref_clk] [get_bd_pins axis_clk_wiz
 set axis_clk "axis_clk_wiz/clk_390m625"
 
 # Configure the NoC. The CIPS automation pre-connects S00..S05 (FPD/LPD/PMC)
-# and aclk0..5. We add 3 AXI slave ports (S06..S08) for the MCDMA
-# (SG/MM2S/S2MM) on aclk6 (system clock), each mapped to a memory controller.
-set_property -dict [list CONFIG.NUM_CLKS {7} CONFIG.NUM_SI {9}] [get_bd_cells axi_noc_0]
-set_property -dict [list CONFIG.CONNECTIONS {MC_0 {read_bw {500} write_bw {500} read_avg_burst {4} write_avg_burst {4}}}] [get_bd_intf_pins /axi_noc_0/S06_AXI]
-set_property -dict [list CONFIG.CONNECTIONS {MC_1 {read_bw {500} write_bw {500} read_avg_burst {4} write_avg_burst {4}}}] [get_bd_intf_pins /axi_noc_0/S07_AXI]
-set_property -dict [list CONFIG.CONNECTIONS {MC_2 {read_bw {500} write_bw {500} read_avg_burst {4} write_avg_burst {4}}}] [get_bd_intf_pins /axi_noc_0/S08_AXI]
+# and aclk0..5. Each QSFP port's MCDMA adds 3 AXI slave ports (SG/MM2S/S2MM) on
+# aclk6 (system clock); their per-SI memory-controller CONNECTIONS are set in
+# the per-port loop below. So NUM_SI = 6 (CIPS) + 3 per QSFP port.
+set_property -dict [list CONFIG.NUM_CLKS {7} CONFIG.NUM_SI [expr {6 + 3 * $num_ports}]] [get_bd_cells axi_noc_0]
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_noc_0/aclk6]
 set noc_port_index 6
 set noc_clk_index 6
@@ -196,14 +194,16 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_390m625
 connect_bd_net [get_bd_pins $axis_clk] [get_bd_pins rst_390m625/slowest_sync_clk]
 connect_bd_net [get_bd_pins versal_cips_0/pl0_resetn] [get_bd_pins rst_390m625/ext_reset_in]
 
-# AXI SmartConnect for AXI Lite interfaces
-# Masters: M00=mrmac s_axi, M01=mcdma s_axi_lite, M02=gpio_qsfp0,
-#          M03=clk_iic, M04=qsfp0_iic
+# AXI SmartConnect for the AXI-Lite control interfaces. Masters are allocated
+# with a running counter (smc_mi): per QSFP port -> {port control aggregate,
+# qsfp sideband GPIO, qsfp module I2C} = 3 each, plus 1 shared Si5328 clk I2C.
+# So NUM_MI = 3 per port + 1.
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect axi_smc
-set_property -dict [list CONFIG.NUM_MI {5} CONFIG.NUM_SI {1} ] [get_bd_cells axi_smc]
+set_property -dict [list CONFIG.NUM_MI [expr {3 * $num_ports + 1}] CONFIG.NUM_SI {1} ] [get_bd_cells axi_smc]
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_smc/aclk]
 connect_bd_net [get_bd_pins rst_100m/interconnect_aresetn] [get_bd_pins axi_smc/aresetn]
 connect_bd_intf_net [get_bd_intf_pins versal_cips_0/M_AXI_LPD] [get_bd_intf_pins axi_smc/S00_AXI]
+set smc_mi 0
 
 # GT ref clock (322.265625 MHz, from the FMC Si5328) and utility buffer.
 # 322.265625 MHz + LCPLL integer-N replicates the AMD VCK190 Ethernet TRD's
@@ -408,9 +408,9 @@ connect_bd_net [get_bd_pins util_ds_buf_0/IBUF_OUT] [get_bd_pins gt_quad_base_0/
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins gt_quad_base_0/apb3clk]
 connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins gt_quad_base_0/apb3presetn]
 
-# QSFP GT interface (4-lane serial)
-create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 qsfp_gt
-connect_bd_intf_net [get_bd_intf_pins gt_quad_base_0/GT_Serial] [get_bd_intf_ports qsfp_gt]
+# QSFP slot 0 GT interface (4-lane serial)
+create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 qsfp0_gt
+connect_bd_intf_net [get_bd_intf_pins gt_quad_base_0/GT_Serial] [get_bd_intf_ports qsfp0_gt]
 
 # APB3 bridge to drive the GT quad's dynamic reconfiguration port
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_apb_bridge axi_apb_bridge_0
@@ -418,6 +418,48 @@ set_property -dict [list CONFIG.C_APB_NUM_SLAVES {1} CONFIG.C_M_APB_PROTOCOL {ap
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_apb_bridge_0/s_axi_aclk]
 connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_apb_bridge_0/s_axi_aresetn]
 connect_bd_intf_net [get_bd_intf_pins axi_apb_bridge_0/APB_M] [get_bd_intf_pins gt_quad_base_0/APB3_INTF]
+
+#########################################################
+# QSFP slot 1 GT quad (Phase 2) - DP4-7, second 100G CAUI-4 MRMAC port.
+#########################################################
+# Identical GT config to slot 0 (reuses the same $trd_gt field set), with its
+# own reference clock (gt_ref_clk_1 = GBTCLK1 from the FMC Si5328) and its own
+# qsfp1_gt serial port. Only built when port 1 is in $ports.
+if {[lsearch -exact $ports 1] >= 0} {
+  create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 gt_ref_clk_1
+  set_property CONFIG.FREQ_HZ 322265625 [get_bd_intf_ports /gt_ref_clk_1]
+  create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf util_ds_buf_1
+  set_property CONFIG.C_BUF_TYPE {IBUFDSGTE} [get_bd_cells util_ds_buf_1]
+  connect_bd_intf_net [get_bd_intf_ports gt_ref_clk_1] [get_bd_intf_pins util_ds_buf_1/CLK_IN_D]
+
+  create_bd_cell -type ip -vlnv xilinx.com:ip:gt_quad_base gt_quad_base_1
+  set_property -dict [list \
+    CONFIG.PROT0_LR0_SETTINGS.VALUE_MODE MANUAL \
+    CONFIG.PROT0_NO_OF_LANES.VALUE_MODE MANUAL \
+  ] [get_bd_cells gt_quad_base_1]
+  array unset gtset1
+  array set gtset1 [get_property CONFIG.PROT0_LR0_SETTINGS [get_bd_cells gt_quad_base_1]]
+  foreach {k v} $trd_gt {
+    if {[info exists gtset1($k)]} { set gtset1($k) $v }
+  }
+  set_property -dict [list \
+    CONFIG.PROT0_LR0_SETTINGS [array get gtset1] \
+    CONFIG.PROT0_NO_OF_LANES {4} \
+  ] [get_bd_cells gt_quad_base_1]
+
+  connect_bd_net [get_bd_pins util_ds_buf_1/IBUF_OUT] [get_bd_pins gt_quad_base_1/GT_REFCLK0]
+  connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins gt_quad_base_1/apb3clk]
+  connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins gt_quad_base_1/apb3presetn]
+
+  create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 qsfp1_gt
+  connect_bd_intf_net [get_bd_intf_pins gt_quad_base_1/GT_Serial] [get_bd_intf_ports qsfp1_gt]
+
+  create_bd_cell -type ip -vlnv xilinx.com:ip:axi_apb_bridge axi_apb_bridge_1
+  set_property -dict [list CONFIG.C_APB_NUM_SLAVES {1} CONFIG.C_M_APB_PROTOCOL {apb3}] [get_bd_cells axi_apb_bridge_1]
+  connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_apb_bridge_1/s_axi_aclk]
+  connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_apb_bridge_1/s_axi_aresetn]
+  connect_bd_intf_net [get_bd_intf_pins axi_apb_bridge_1/APB_M] [get_bd_intf_pins gt_quad_base_1/APB3_INTF]
+}
 
 #########################################################
 # QSFP ports
@@ -474,6 +516,12 @@ proc create_qsfp_port {label} {
   # interface pins (gt_*_serdes_interface_*) that connect directly to
   # gt_quad_base TXn/RXn_GT_IP_Interface (same VLNV).
   set_property CONFIG.MRMAC_IS_GT_WIZ_OLD {1} [get_bd_cells mrmac]
+  # Pin each port's MRMAC to the integrated-MAC site in the clock region of its
+  # GT quad. Port 0 = GTY_QUAD_X1Y1 (region X9Y1) -> MRMAC_X0Y0; port 1 =
+  # GTY_QUAD_X1Y2 (region X9Y2) -> MRMAC_X0Y2. Both MRMACs default to
+  # MRMAC_X0Y0, so without this port 1 fails to place ("bel is occupied").
+  set mrmac_loc_map {0 MRMAC_X0Y0 1 MRMAC_X0Y2}
+  set_property CONFIG.MRMAC_LOCATION_C0 [dict get $mrmac_loc_map $label] [get_bd_cells mrmac]
   # GT reference clock = 322.265625 MHz (the FMC Si5328 output) - matches the
   # AMD TRD's MRMAC GT config. Set it (and the per-channel refclks) explicitly
   # so the MRMAC and gt_quad_base agree. Line rate stays 25.78125 Gb/s
@@ -853,34 +901,37 @@ foreach label $ports {
   connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins qsfp_port$label/periph_rstn]
   connect_bd_net [get_bd_pins rst_100m/interconnect_aresetn] [get_bd_pins qsfp_port$label/intercon_rstn]
   connect_bd_net [get_bd_pins rst_390m625/peripheral_aresetn] [get_bd_pins qsfp_port$label/axis_rstn]
-  connect_bd_net [get_bd_pins gt_quad_base_0/gtpowergood] [get_bd_pins qsfp_port$label/gtpowergood_in]
+  # Each QSFP port has its own GT quad (gt_quad_base_$label): port 0 = slot 0
+  # (DP0-3), port 1 = slot 1 (DP4-7).
+  set gtq gt_quad_base_$label
+  connect_bd_net [get_bd_pins $gtq/gtpowergood] [get_bd_pins qsfp_port$label/gtpowergood_in]
 
   # GT serdes interfaces (4 lanes) and per-channel out/usr clocks
   foreach ch {0 1 2 3} {
-    connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/gt_tx_serdes_interface_$ch] [get_bd_intf_pins gt_quad_base_0/TX${ch}_GT_IP_Interface]
-    connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/gt_rx_serdes_interface_$ch] [get_bd_intf_pins gt_quad_base_0/RX${ch}_GT_IP_Interface]
-    connect_bd_net [get_bd_pins gt_quad_base_0/ch${ch}_txoutclk] [get_bd_pins qsfp_port$label/ch${ch}_txoutclk]
-    connect_bd_net [get_bd_pins gt_quad_base_0/ch${ch}_rxoutclk] [get_bd_pins qsfp_port$label/ch${ch}_rxoutclk]
-    connect_bd_net [get_bd_pins qsfp_port$label/ch${ch}_txusrclk] [get_bd_pins gt_quad_base_0/ch${ch}_txusrclk]
-    connect_bd_net [get_bd_pins qsfp_port$label/ch${ch}_rxusrclk] [get_bd_pins gt_quad_base_0/ch${ch}_rxusrclk]
+    connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/gt_tx_serdes_interface_$ch] [get_bd_intf_pins $gtq/TX${ch}_GT_IP_Interface]
+    connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/gt_rx_serdes_interface_$ch] [get_bd_intf_pins $gtq/RX${ch}_GT_IP_Interface]
+    connect_bd_net [get_bd_pins $gtq/ch${ch}_txoutclk] [get_bd_pins qsfp_port$label/ch${ch}_txoutclk]
+    connect_bd_net [get_bd_pins $gtq/ch${ch}_rxoutclk] [get_bd_pins qsfp_port$label/ch${ch}_rxoutclk]
+    connect_bd_net [get_bd_pins qsfp_port$label/ch${ch}_txusrclk] [get_bd_pins $gtq/ch${ch}_txusrclk]
+    connect_bd_net [get_bd_pins qsfp_port$label/ch${ch}_rxusrclk] [get_bd_pins $gtq/ch${ch}_rxusrclk]
   }
 
   # MCDMA MM interfaces to NoC (SG, MM2S, S2MM)
-  set index_padded [format "%02d" $noc_port_index]
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/m_axi_sg] [get_bd_intf_pins axi_noc_0/S${index_padded}_AXI]
-  set noc_port_index [expr {$noc_port_index + 1}]
-  set index_padded [format "%02d" $noc_port_index]
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/m_axi_mm2s] [get_bd_intf_pins axi_noc_0/S${index_padded}_AXI]
-  set noc_port_index [expr {$noc_port_index + 1}]
-  set index_padded [format "%02d" $noc_port_index]
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/m_axi_s2mm] [get_bd_intf_pins axi_noc_0/S${index_padded}_AXI]
-  set noc_port_index [expr {$noc_port_index + 1}]
+  # SG / MM2S / S2MM each take a NoC slave port, mapped to memory-controller
+  # ports MC_0 / MC_1 / MC_2. Both QSFP ports share the same MC ports (the
+  # single DDR controller); the NoC arbitrates. CONNECTIONS must be set per SI.
+  foreach {intf mc} {m_axi_sg MC_0 m_axi_mm2s MC_1 m_axi_s2mm MC_2} {
+    set index_padded [format "%02d" $noc_port_index]
+    set_property -dict [list CONFIG.CONNECTIONS [list $mc {read_bw {500} write_bw {500} read_avg_burst {4} write_avg_burst {4}}]] [get_bd_intf_pins /axi_noc_0/S${index_padded}_AXI]
+    connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/$intf] [get_bd_intf_pins axi_noc_0/S${index_padded}_AXI]
+    set noc_port_index [expr {$noc_port_index + 1}]
+  }
 
   # All MCDMA NoC ports share aclk6 (system clock), already connected above.
 
-  # AXI-Lite control interface
-  set index_padded [format "%02d" $label]
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/S_AXI_LITE] [get_bd_intf_pins axi_smc/M${index_padded}_AXI]
+  # AXI-Lite control interface (port control aggregate: mrmac + mcdma + gt gpio)
+  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/S_AXI_LITE] [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI]
+  incr smc_mi
 
   # External LED ports
   create_bd_port -dir O grn_led_qsfp$label
@@ -907,7 +958,8 @@ foreach label $ports {
   ] [get_bd_cells axi_gpio_qsfp$label]
   connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_gpio_qsfp$label/s_axi_aclk]
   connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_gpio_qsfp$label/s_axi_aresetn]
-  connect_bd_intf_net [get_bd_intf_pins axi_smc/M02_AXI] [get_bd_intf_pins axi_gpio_qsfp$label/S_AXI]
+  connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_gpio_qsfp$label/S_AXI]
+  incr smc_mi
 
   # GPIO channel 1 outputs -> modsell/resetl/lpmode
   create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilslice:1.0 slice_modsell$label
@@ -935,28 +987,33 @@ foreach label $ports {
   connect_bd_net [get_bd_ports modprsl_qsfp$label] [get_bd_pins qsfp_in_cat$label/In0]
   connect_bd_net [get_bd_ports intl_qsfp$label] [get_bd_pins qsfp_in_cat$label/In1]
   connect_bd_net [get_bd_pins qsfp_in_cat$label/dout] [get_bd_pins axi_gpio_qsfp$label/gpio2_io_i]
+
+  #########################################################
+  # QSFP module management I2C (per port)
+  #########################################################
+  create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic axi_iic_qsfp$label
+  connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_iic_qsfp$label/S_AXI]
+  incr smc_mi
+  connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_iic_qsfp$label/s_axi_aclk]
+  connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_iic_qsfp$label/s_axi_aresetn]
+  lappend intr_list "axi_iic_qsfp$label/iic2intc_irpt"
+  create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 qsfp${label}_i2c
+  connect_bd_intf_net [get_bd_intf_ports qsfp${label}_i2c] [get_bd_intf_pins axi_iic_qsfp$label/IIC]
 }
 
 #########################################################
-# I2C buses (direct, no PCA9548 mux)
+# Shared I2C bus (direct, no PCA9548 mux)
 #########################################################
-# clk_i2c : Si5328 jitter-attenuating clock generator
+# clk_i2c : Si5328 jitter-attenuating clock generator (one per board, shared by
+# both QSFP ports - it sources both GBTCLK0 and GBTCLK1 reference clocks).
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic axi_iic_clk
-connect_bd_intf_net [get_bd_intf_pins axi_smc/M03_AXI] [get_bd_intf_pins axi_iic_clk/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_iic_clk/S_AXI]
+incr smc_mi
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_iic_clk/s_axi_aclk]
 connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_iic_clk/s_axi_aresetn]
 lappend intr_list "axi_iic_clk/iic2intc_irpt"
 create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 clk_i2c
 connect_bd_intf_net [get_bd_intf_ports clk_i2c] [get_bd_intf_pins axi_iic_clk/IIC]
-
-# qsfp0_i2c : QSFP0 module management I2C
-create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic axi_iic_qsfp0
-connect_bd_intf_net [get_bd_intf_pins axi_smc/M04_AXI] [get_bd_intf_pins axi_iic_qsfp0/S_AXI]
-connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_iic_qsfp0/s_axi_aclk]
-connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_iic_qsfp0/s_axi_aresetn]
-lappend intr_list "axi_iic_qsfp0/iic2intc_irpt"
-create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 qsfp0_i2c
-connect_bd_intf_net [get_bd_intf_ports qsfp0_i2c] [get_bd_intf_pins axi_iic_qsfp0/IIC]
 
 # Connect the interrupts to CIPS
 set intr_index 0
