@@ -766,7 +766,21 @@ proc create_qsfp_port {label} {
   connect_bd_net [get_bd_pins axis_clk] [get_bd_pins tx_dwidth/aclk]
   connect_bd_net [get_bd_pins axis_rstn] [get_bd_pins tx_dwidth/aresetn]
   connect_bd_intf_net [get_bd_intf_pins tx_cdc_fifo/M_AXIS] [get_bd_intf_pins tx_dwidth/S_AXIS]
-  connect_bd_intf_net [get_bd_intf_pins tx_dwidth/M_AXIS] [get_bd_intf_pins mrmac/axis_tx_port0]
+  # TX adapter: standard 384b AXIS (from tx_dwidth) -> MRMAC 6-lane client.
+  # The MRMAC axis_tx_port0 BD interface is handshake-only (TDATA_NUM_BYTES=0);
+  # the data rides on loose ports tx_axis_tdata0..5 + tx_axis_tkeep_user0..5, so
+  # we cannot connect tx_dwidth straight to axis_tx_port0 (that mis-delineated
+  # frames). The adapter splits the 384b AXIS into the six MRMAC lanes.
+  create_bd_cell -type module -reference mrmac_tx_axis_adapter tx_axis_adapter
+  connect_bd_net [get_bd_pins axis_clk] [get_bd_pins tx_axis_adapter/aclk]
+  connect_bd_intf_net [get_bd_intf_pins tx_dwidth/M_AXIS] [get_bd_intf_pins tx_axis_adapter/S_AXIS]
+  foreach ln {0 1 2 3 4 5} {
+    connect_bd_net [get_bd_pins tx_axis_adapter/tx_axis_tdata$ln]      [get_bd_pins mrmac/tx_axis_tdata$ln]
+    connect_bd_net [get_bd_pins tx_axis_adapter/tx_axis_tkeep_user$ln] [get_bd_pins mrmac/tx_axis_tkeep_user$ln]
+  }
+  connect_bd_net [get_bd_pins tx_axis_adapter/tx_axis_tlast]  [get_bd_pins mrmac/tx_axis_tlast_0]
+  connect_bd_net [get_bd_pins tx_axis_adapter/tx_axis_tvalid] [get_bd_pins mrmac/tx_axis_tvalid_0]
+  connect_bd_net [get_bd_pins mrmac/tx_axis_tready_0]         [get_bd_pins tx_axis_adapter/tx_axis_tready]
 
   #########################################################
   # RX datapath: MRMAC rx(384b, axis_clk) -> dwidth(384->512) -> CDC fifo -> MCDMA(512b, sys_clk)
@@ -781,7 +795,21 @@ proc create_qsfp_port {label} {
   ] [get_bd_cells rx_dwidth]
   connect_bd_net [get_bd_pins axis_clk] [get_bd_pins rx_dwidth/aclk]
   connect_bd_net [get_bd_pins axis_rstn] [get_bd_pins rx_dwidth/aresetn]
-  connect_bd_intf_net [get_bd_intf_pins mrmac/axis_rx_port0] [get_bd_intf_pins rx_dwidth/S_AXIS]
+  # RX adapter: MRMAC 6-lane client -> standard 384b AXIS (into rx_dwidth).
+  # axis_rx_port0 is handshake-only; data is on loose ports rx_axis_tdata0..5 +
+  # rx_axis_tkeep_user0..5. Connecting axis_rx_port0 straight to rx_dwidth made
+  # the converter assert TLAST every beat (each 384b beat became one packet ->
+  # frames fragmented into ~48-byte pieces). The adapter packs the six lanes
+  # into one 384b word and passes the single per-frame TLAST through.
+  create_bd_cell -type module -reference mrmac_rx_axis_adapter rx_axis_adapter
+  connect_bd_net [get_bd_pins axis_clk] [get_bd_pins rx_axis_adapter/aclk]
+  foreach ln {0 1 2 3 4 5} {
+    connect_bd_net [get_bd_pins mrmac/rx_axis_tdata$ln]      [get_bd_pins rx_axis_adapter/rx_axis_tdata$ln]
+    connect_bd_net [get_bd_pins mrmac/rx_axis_tkeep_user$ln] [get_bd_pins rx_axis_adapter/rx_axis_tkeep_user$ln]
+  }
+  connect_bd_net [get_bd_pins mrmac/rx_axis_tlast_0]  [get_bd_pins rx_axis_adapter/rx_axis_tlast]
+  connect_bd_net [get_bd_pins mrmac/rx_axis_tvalid_0] [get_bd_pins rx_axis_adapter/rx_axis_tvalid]
+  connect_bd_intf_net [get_bd_intf_pins rx_axis_adapter/M_AXIS] [get_bd_intf_pins rx_dwidth/S_AXIS]
 
   create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo rx_cdc_fifo
   set_property -dict [list \

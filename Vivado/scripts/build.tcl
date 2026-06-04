@@ -149,6 +149,15 @@ if {[string equal [get_filesets -quiet sources_1] ""]} {
 set obj [get_filesets sources_1]
 set_property -name "top" -value "${block_name}_wrapper" -objects $obj
 
+# Add custom RTL sources (modules referenced by the block design, e.g. the
+# MRMAC client <-> AXI4-Stream adapters). These MUST be added before the block
+# design is sourced so 'create_bd_cell -type module -reference' can resolve them.
+set hdl_files [glob -nocomplain "$origin_dir/src/hdl/*.v" "$origin_dir/src/hdl/*.sv"]
+if {[llength $hdl_files] > 0} {
+  add_files -norecurse -fileset sources_1 $hdl_files
+  update_compile_order -fileset sources_1
+}
+
 # Create 'constrs_1' fileset (if not found)
 if {[string equal [get_filesets -quiet constrs_1] ""]} {
   create_fileset -constrset constrs_1
