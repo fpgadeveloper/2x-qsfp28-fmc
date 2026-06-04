@@ -264,6 +264,38 @@ port 0 : GTY_QUAD_X1Y1 (region X9Y1) -> MRMAC_X0Y0
 port 1 : GTY_QUAD_X1Y2 (region X9Y2) -> MRMAC_X0Y2
 ```
 
+#### QSFP module sideband and power-on reset
+
+Each port has a dual-channel AXI GPIO (`axi_gpio_qsfp*`) for the QSFP
+module's sideband signals:
+
+* **Channel 1 (outputs):** bit 0 = `ModSelL`, bit 1 = `ResetL`, bit 2 =
+  `LPMode`.
+* **Channel 2 (inputs):** bit 0 = `ModPrsL`, bit 1 = `IntL`.
+
+`ResetL` is active-low — the module is held in reset while the line is 0.
+The GPIO is given a power-on output default of `0x2`
+(`CONFIG.C_DOUT_DEFAULT` on the `axi_gpio`), so the lines come up
+`ModSelL = 0`, `ResetL = 1` (deasserted), `LPMode = 0` (high power): the
+module is enabled the instant the device image is loaded, before Linux
+boots.
+
+```{important}
+Without this default the GPIO powers up at `0x0`, so `ResetL = 0` and the
+QSFP module is **held in reset** — its laser stays off and no link comes
+up. A passive *electrical* loopback still works in that state (it needs no
+powered module), which masks the problem; a real optical module or AOC
+stays dark until `ResetL` is deasserted.
+```
+
+The MRMAC / `xilinx_axienet` driver manages only the **GT** reset (via the
+`gt-*-gpios`); it never touches the optical module's reset, which is
+board glue. This mirrors the Quad SFP28 FMC design, where the SFP
+`TX_DISABLE` is tied to a constant in fabric. Here the line is left
+software-controllable through the GPIO at `0x80020000` / `0x80030000`, so
+`ResetL` / `LPMode` / `ModSelL` can still be driven at runtime (e.g.
+`devmem 0x80020000 32 0x2`) if a module ever needs to be power-cycled.
+
 ### Address and interrupt maps
 
 The control peripherals are mapped from `M_AXI_LPD`:
@@ -414,6 +446,29 @@ one?"*
   enables CKOUT2 (sets the dual-LVDS output format and clears the CKOUT2
   disable bit) and mirrors CKOUT1's divider to CKOUT2 (both outputs share
   the same PLL, so they run at the same frequency). It is registered via
+  `SRC_URI:append` in `recipes-kernel/linux/linux-xlnx_%.bbappend`.
+
+* **MRMAC link carrier-monitor kernel patch.** The MRMAC has no
+  PHY/phylink and gives no link-change interrupt, and the stock
+  `xilinx_axienet` driver checks RX block lock only once in
+  `axienet_open()` (a 1 ms poll), failing the open with `-ENODEV` if the
+  link is not already up. On a cold bring-up the GT/PCS take longer than
+  that to lock, so the open loses the race and the port needs a manual
+  `ip link` bounce; a link partner that powers on later never brings the
+  port up; and the driver never sets the netdev carrier (`ip link` shows
+  `state UNKNOWN`). The patch
+  `recipes-kernel/linux/linux-xlnx/0002-net-axienet-mrmac-carrier-link-monitor.patch`
+  adds a delayed-work monitor that drives the netdev carrier from RX
+  block-lock + status. `open()` now brings the interface up with carrier
+  *off* and starts the monitor instead of failing. While the link is down
+  the monitor re-issues the MRMAC core/serdes reset (`axienet_mrmac_reset`)
+  each cycle to re-attempt lock — the Versal GTY RX does not re-acquire
+  block lock on a partner signal that stabilises *after* its last reset,
+  and the GT reset is one-shot, so the MRMAC reset is the part that
+  re-aligns the lanes — and once up it polls for loss. The net effect is
+  that a port comes up automatically at boot and recovers on cable re-seat
+  or partner power-on, with link state reflected in the netdev carrier
+  (`MRMAC link up at 100000` / `MRMAC link down`). It is registered via
   `SRC_URI:append` in `recipes-kernel/linux/linux-xlnx_%.bbappend`.
 
 * **Loopback self-test app.** The `mrmac-loopback-test` recipe

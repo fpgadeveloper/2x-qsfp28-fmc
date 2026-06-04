@@ -208,8 +208,10 @@ driver: xilinx_axienet      # -> 2x QSFP28 FMC port
 $ dmesg | grep -iE "mrmac|axienet|si53|block lock|link"
 ```
 
-A healthy bring-up prints `MRMAC setup at 100000` for each port and the Si5328 clock at
-322265625 Hz (`cat /sys/kernel/debug/clk/clk_summary | grep clk0`).
+A healthy bring-up prints `MRMAC setup at 100000 (link monitored)` for each port and the Si5328
+clock at 322265625 Hz (`cat /sys/kernel/debug/clk/clk_summary | grep clk0`). A port with a 100G
+link partner connected then prints `MRMAC link up at 100000` — see [Link bring-up and
+monitoring](#link-bring-up-and-monitoring) below.
 
 ## Example Usage
 
@@ -251,14 +253,43 @@ with a loopback module in slot 1:
 # mrmac-loopback-test eth1
 ```
 
-### Bring up a port with a fixed IP address
+### Link bring-up and monitoring
 
-Use `ip` to assign a static address and bring the port up.
+Each MRMAC port carries no PHY and emits no link-change interrupt, so the
+`xilinx_axienet` driver in this design runs a background **carrier monitor** (see the
+*Modifications layered on the stock BSP* section of [advanced](advanced)). With a 100G link
+partner connected — an optical module/AOC or a DAC to another 100G CAUI-4 device — the port comes
+up **automatically**; no `ip link` bounce or manual reset is needed:
+
+```
+[   12.663049] xilinx_axienet 80000000.mrmac eth0: MRMAC setup at 100000 (link monitored)
+[   12.672764] xilinx_axienet 80000000.mrmac eth0: MRMAC link up at 100000
+```
+
+Carrier tracks the physical link, so the port reads `UP` in `ip link` only while a partner is
+present, and the monitor follows cable events — unplug and re-seat the module and the link drops
+and recovers on its own:
+
+```
+[   73.074149] xilinx_axienet 80000000.mrmac eth0: MRMAC link down
+[   79.026154] xilinx_axienet 80000000.mrmac eth0: MRMAC link up at 100000
+```
+
+```{note}
+This design runs CAUI-4 with **FEC disabled**, so the link partner must also have FEC off — a 100G
+NIC or switch port set to RS-FEC (Clause 91) will not link up against it. See
+[troubleshooting](troubleshooting).
+```
+
+### Assign an IP address
+
+The link itself comes up on its own (above); to pass IP traffic, give the port an address. Each
+port must be on its own subnet.
 
 ```
 # ip addr add 192.168.1.10/24 dev eth0
 # ip link set eth0 up
-[   42.118663] xilinx_axienet 80000000.mrmac eth0: Link is Up - 100Gbps/Full - flow control off
+# ping 192.168.1.1
 ```
 
 ### Inspect port settings with ethtool
@@ -282,17 +313,11 @@ reverse). The 2x QSFP28 FMC ports connect at 100G, but single-stream throughput 
 SoCs is **CPU-bound** — the path traverses the kernel TCP/IP stack and the single-queue
 `xilinx_axienet` MCDMA driver on a Cortex-A72 — so the measured figures are far below line rate.
 
-```{note}
-The iperf3 figures below are placeholders. They will be filled in once a two-endpoint
-100G measurement has been captured on hardware (a 100G-capable link partner, e.g. a host PC with a
-100G NIC, connected to the QSFP28 port with a DAC or optical module).
-```
-
 #### On the host PC (server side)
 
 ```
 $ sudo apt install iperf3
-$ iperf3 -s -B 192.168.1.1
+$ iperf3 -s
 -----------------------------------------------------------
 Server listening on 5201 (test #1)
 -----------------------------------------------------------
@@ -300,30 +325,21 @@ Server listening on 5201 (test #1)
 
 #### On the PetaLinux target (client side)
 
-**TCP, target → host:**
+A single TCP stream is limited by one CPU core, so use several parallel streams (`-P`). The figures
+below were captured on a `vck190_fmcp1` target driving a host PC's 100G NIC over an optical link
+(target `eth0` → host `192.168.1.1`):
 
 ```
-# iperf3 -c 192.168.1.1 -t 10 -i 1
-Connecting to host 192.168.1.1, port 5201
-[ ID] Interval           Transfer     Bitrate         Retr
-[  5]   0.00-10.00  sec   <TBD> GBytes   <TBD> Gbits/sec   <TBD>  sender
-[  5]   0.00-10.00  sec   <TBD> GBytes   <TBD> Gbits/sec          receiver
+# iperf3 -c 192.168.1.1 -P 8 -t 20
+...
+[SUM]   0.00-20.04  sec  4.44 GBytes  1.90 Gbits/sec  12800             sender
+[SUM]   0.00-20.04  sec  4.43 GBytes  1.90 Gbits/sec                    receiver
 ```
 
-**TCP, host → target** (add `-R`):
-
-```
-# iperf3 -c 192.168.1.1 -t 10 -i 1 -R
-[  5]   0.00-10.00  sec   <TBD> GBytes   <TBD> Gbits/sec   <TBD>  sender
-[  5]   0.00-10.00  sec   <TBD> GBytes   <TBD> Gbits/sec          receiver
-```
-
-**UDP, target → host:**
-
-```
-# iperf3 -c 192.168.1.1 -t 10 -i 1 -u -b 100G
-[  5]   0.00-10.00  sec   <TBD> GBytes   <TBD> Gbits/sec  <TBD> ms  <TBD>/<TBD> (<TBD>%)  receiver
-```
+That is about **1.9 Gbit/s** aggregate — far short of the 100 Gbit/s line rate — with TCP
+retransmits accumulating as the sender's socket buffers and the single MCDMA queue saturate the
+CPU. Reversing the direction (`-R`, host → target) or switching to UDP (`-u -b <rate>`) exercises
+the other paths, but all are bounded by the same embedded-CPU ceiling, not by the link.
 
 #### Where the bottleneck is and what the solution is
 

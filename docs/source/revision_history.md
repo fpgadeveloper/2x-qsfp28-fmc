@@ -23,5 +23,12 @@
   `max-speed = <100000>`, and the Si5328 clock-generator node.
 * Kernel patch enabling the Si5328 CKOUT2 output so the second QSFP28
   port's GT reference clock (GBTCLK1) is driven.
+* QSFP module sideband held out of reset at configuration time
+  (`axi_gpio_qsfp` `C_DOUT_DEFAULT = 0x2`), so optical modules / AOCs power
+  up enabled rather than held dark in reset.
+* Kernel patch adding an MRMAC link carrier monitor: a port with a 100G
+  partner comes up automatically over a cable and recovers on cable
+  re-seat or partner power-on (`MRMAC link up` / `MRMAC link down`), with
+  link state reflected in the netdev carrier.
 * Bundled `mrmac-loopback-test` rootfs self-test for validating each
   port's datapath with a passive 100G loopback module.

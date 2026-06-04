@@ -56,24 +56,38 @@ The MRMAC bring-up messages are in the kernel log. The single most useful diagno
 dmesg | grep -iE "mrmac|axienet|si53|block lock|link|reset done"
 ```
 
-A healthy port prints `MRMAC setup at 100000` and the link comes up at 100 Gbps.
+A healthy port prints `MRMAC setup at 100000 (link monitored)`, and — with a 100G link partner
+connected — `MRMAC link up at 100000`.
 
-### A port reports `MRMAC block lock not complete`
+### A connected port never reports `MRMAC link up`
+
+A port that cannot achieve block lock no longer fails its open or spams the log — the carrier
+monitor (see the *Modifications layered on the stock BSP* section of [advanced](advanced)) brings
+the interface up with carrier *off* and keeps re-attempting the reset in the background. You will
+see
 
 ```
-xilinx_axienet 80000000.mrmac eth0: MRMAC block lock not complete! Cross-check the MAC ref clock configuration
-xilinx_axienet 80000000.mrmac eth0: Link is down
+xilinx_axienet 80000000.mrmac eth0: MRMAC setup at 100000 (link monitored)
 ```
 
-This means the four CAUI-4 lanes did not align. Check, in order:
+but never a matching `MRMAC link up at 100000`, and `ip -br link` shows the port `NO-CARRIER`. The
+port will come up on its own the moment the cause below is resolved (no reboot needed). This means
+the four CAUI-4 lanes are not aligning — check, in order:
 
 1. **Is there a valid 100G link?** For a standalone test, plug a **100G QSFP28 passive loopback
    module** into the port (not a 25G/SFP loopback). For a live link, the partner must also be
    100GbE CAUI-4.
-2. **Is the Si5328 programmed?** `cat /sys/kernel/debug/clk/clk_summary | grep clk0` should show
+2. **Is FEC disabled on the partner?** This design runs CAUI-4 with **FEC off**. A 100G NIC or
+   switch port configured for RS-FEC (Clause 91) will not link up against it — set the partner's
+   FEC to off/none (on a Linux host, `sudo ethtool --set-fec <iface> encoding off`).
+3. **Is the Si5328 programmed?** `cat /sys/kernel/debug/clk/clk_summary | grep clk0` should show
    the GT reference clock at `322265625`. If it is wrong or zero, the Si5328 device tree node or
    the `clk-si5324` driver is not programming the clock.
-3. If you have modified the block design, verify the per-lane CAUI-4 GT user-clocking is intact
+4. **Is the QSFP module out of reset?** `ResetL` defaults deasserted in the bitstream; if you have
+   changed the QSFP sideband GPIO default or driven it from software, confirm `ResetL` is high (see
+   the *QSFP module sideband and power-on reset* part of [advanced](advanced)). A real optical
+   module/AOC stays dark while held in reset, even though a passive electrical loopback would link.
+5. If you have modified the block design, verify the per-lane CAUI-4 GT user-clocking is intact
    (see the *Per-lane CAUI-4 user clocking* part of [advanced](advanced)) — broadcasting one
    lane's recovered clock to all four lanes is the classic cause of this symptom even with a good
    loopback.

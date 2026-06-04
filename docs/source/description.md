@@ -37,7 +37,7 @@ Each of the two QSFP28 ports is an independent, identical 100G subsystem:
   a GT-control AXI GPIO (which lets the Linux driver reset the transceiver and read reset-done).
   An AXI IIC controller per port reaches the QSFP module management bus, a shared AXI IIC reaches
   the Si5328, and the QSFP module sideband signals plus user LEDs (link status) are driven from
-  AXI GPIO.
+  AXI GPIO — held out of reset at power-on so an inserted optical module/AOC comes up enabled.
 
 ## Supported Hardware Platforms
 

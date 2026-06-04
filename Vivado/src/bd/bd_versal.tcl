@@ -948,6 +948,14 @@ foreach label $ports {
   #########################################################
   # Channel 1 (outputs): bit0=modsell, bit1=resetl, bit2=lpmode
   # Channel 2 (inputs):  bit0=modprsl, bit1=intl
+  #
+  # Power-on default 0x2 -> modsell=0, resetl=1 (deasserted, active-low),
+  # lpmode=0 (high power). resetl MUST default high or the QSFP module powers
+  # up held in reset (laser off, no link) until software writes the GPIO. The
+  # sfp28-fmc-xxv reference hard-ties its SFP tx_disable to const_low for the
+  # same "module enabled at config time" behaviour; here we keep the line
+  # software-controllable (modsell/lpmode/resetl on the GPIO) but default it to
+  # the enabled state. Nothing else drives this signal (no driver/gpio-hog).
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio axi_gpio_qsfp$label
   set_property -dict [list \
     CONFIG.C_GPIO_WIDTH {3} \
@@ -955,6 +963,7 @@ foreach label $ports {
     CONFIG.C_ALL_OUTPUTS {1} \
     CONFIG.C_ALL_INPUTS_2 {1} \
     CONFIG.C_IS_DUAL {1} \
+    CONFIG.C_DOUT_DEFAULT {0x00000002} \
   ] [get_bd_cells axi_gpio_qsfp$label]
   connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_gpio_qsfp$label/s_axi_aclk]
   connect_bd_net [get_bd_pins rst_100m/peripheral_aresetn] [get_bd_pins axi_gpio_qsfp$label/s_axi_aresetn]
