@@ -67,45 +67,45 @@ below outlines the corresponding applications available in each environment:
 ## Build instructions
 
 
-### Quick start: cross-platform build runner (recommended)
+### Cross-platform build runner
 
-All build steps can be driven by `build.py` at the repo root, on both
-Windows (git bash) and Linux. The `build.sh` shim finds a suitable
-Python 3 automatically (including the one bundled with the AMD tools):
+All builds are driven by `build.py` at the repo root, on both Windows
+(git bash) and Linux. The `build.sh` shim finds a suitable Python 3
+automatically (including the one bundled with the AMD tools). Source the
+AMD tools first, pick a target label from `./build.sh list`, then use the
+command for the thing you want to build — each command builds whatever it
+depends on automatically, and skips anything that is already built.
+On Windows without git bash, run the same commands from Command Prompt
+or PowerShell using `build.bat` (e.g. `build.bat xsa --target <target>`).
 
-```
-./build.sh list                            # list targets and attributes
-./build.sh xsa --target <target>        # Vivado project + bitstream + XSA
-./build.sh standalone --target <target>   # + Vitis baremetal boot image
-./build.sh all --target <target>  # full chain incl. PetaLinux (Linux only)
-./build.sh status --target <target>        # per-stage artifact state
-./build.sh clean --target <target>         # delete generated outputs
-```
-
-Stages whose outputs already exist are skipped. On Windows the PetaLinux
-and Yocto stages are refused up front with an exact Linux hand-off command.
-The legacy `make` interface below still works on Linux (each Makefile now
-wraps `build.sh`) but is **deprecated and will be removed at the next
-version update**.
-
-Clone the repo:
-```
-git clone https://github.com/fpgadeveloper/2x-qsfp28-fmc.git
-```
-
-Source Vivado and PetaLinux tools:
+#### Build the Vivado project (bitstream + XSA)
 
 ```
-source <path-to-petalinux>/2025.2/settings.sh
-source <path-to-xilinx-tools>/2025.2/Vivado/settings64.sh
+./build.sh xsa --target <target>
 ```
 
-Build all (Vivado project and PetaLinux):
+#### Build PetaLinux (Linux only)
 
 ```
-cd 2x-qsfp28-fmc/PetaLinux
-make petalinux TARGET=vck190_fmcp1
+./build.sh petalinux --target <target>
 ```
+
+#### Build everything
+
+Builds all of the above that the target supports, then gathers the boot
+images into `bootimages/*.zip`:
+
+```
+./build.sh all --target <target>
+./build.sh all --target all          # every target in the repo
+```
+
+Also available: `status`, `clean`, `workspace`, `project` — see
+`./build.sh --help`. On Windows, the PetaLinux and Yocto stages require a
+Linux machine; the runner says so and prints the hand-off command. The
+legacy `make` interface still works on Linux (each Makefile now wraps
+`build.sh`) but is deprecated and will be removed at the next version
+update.
 
 ## Troubleshooting
 

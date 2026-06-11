@@ -19,6 +19,9 @@ a bitstream. The license can be obtained from the AMD Xilinx Licensing site. The
 also requires the Vivado *Enterprise* Edition (a 30-day evaluation license is available from the
 AMD Xilinx Licensing site).
 
+Additionally, some designs use IP cores that are licensed separately from the Vivado edition itself (for example: TEMAC, XXV Ethernet, HDMI). The **IP License** column in the tables below indicates the designs that require such a license to generate a bitstream; evaluation licenses are generally available from AMD for testing.
+
+
 ## Target designs
 
 This repo contains one or more designs that target the supported development board(s) and their
@@ -30,9 +33,9 @@ design and the FMC connector on which to connect the mezzanine card.
 
 These designs drive each QSFP28 port as a single {{ linkspeed }}GbE (CAUI-4) channel.
 
-| Target board        | Target design     | Ports   | FMC Slot    | Vivado<br> Edition |
-|---------------------|-------------------|---------|-------------|-----|
-{% for design in data.designs %}{% if design.linkspeed == linkspeed and design.publish %}| [{{ design.board }}]({{ design.link }}) | `{{ design.label }}` | {{ design.lanes | length }}x | {{ design.connector }} | {{ "Enterprise" if design.license else "Standard 🆓" }} |
+| Target board        | Target design     | Ports   | FMC Slot    | Vivado<br> Edition | IP<br>License |
+|---------------------|-------------------|---------|-------------|-----|-----|
+{% for design in data.designs %}{% if design.linkspeed == linkspeed and design.publish %}| [{{ design.board }}]({{ design.link }}) | `{{ design.label }}` | {{ design.lanes | length }}x | {{ design.connector }} | {{ "Enterprise" if design.license else "Standard 🆓" }} | {{ "Required" if design.ip_license else "-" }} |
 {% endif %}{% endfor %}
 {% endfor %}
 
@@ -61,6 +64,10 @@ bundled with the AMD tools):
 ./build.sh clean --target <target>         # delete generated outputs
 ```
 
+On Windows you can also run the same commands **without git bash**, from
+Command Prompt or PowerShell, using `build.bat` (e.g. `build.bat xsa
+--target <target>`).
+
 Stages whose outputs already exist are skipped on re-run, so the same
 command continues an interrupted build. On Windows, the PetaLinux and Yocto
 stages are refused up front with the exact Linux hand-off command, and the
@@ -82,20 +89,6 @@ If you wish to build the PetaLinux project,
 we recommend that you build the entire project (including the Vivado project) on a machine (either 
 physical or virtual) running one of the [supported Linux distributions].
 ```
-
-### Build Vivado project in Windows
-
-1. Download the repo as a zip file and extract the files to a directory
-   on your hard drive --OR-- clone the repo to your hard drive
-2. Open Windows Explorer, browse to the repo files on your hard drive.
-3. In the `Vivado` directory, double click on the `build-vivado.bat` batch file.
-   You will be prompted to select a target design to build. You will find the project in
-   the folder `Vivado/<target>`.
-4. Run Vivado and open the project that was just created.
-5. Click Generate bitstream.
-6. When the bitstream is successfully generated, select **File->Export->Export Hardware**.
-   In the window that opens, tick **Include bitstream** and use the default name and location
-   for the XSA file.
 
 ## Linux users
 

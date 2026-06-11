@@ -30,7 +30,6 @@ it.
 │       └── ports-versal-01/   <-   port-config overlay: ports 0 and 1
 └── Vivado/
     ├── Makefile               <- Vivado build orchestration
-    ├── build-vivado.bat       <- Windows project-creation helper
     ├── scripts/
     │   ├── build.tcl          <- Project creation + block design assembly
     │   └── xsa.tcl            <- Synthesis, implementation, XSA export
