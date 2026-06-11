@@ -74,12 +74,12 @@ Windows (git bash) and Linux. The `build.sh` shim finds a suitable
 Python 3 automatically (including the one bundled with the AMD tools):
 
 ```
-./build.sh --list                            # list targets and attributes
-./build.sh --target <target> --to xsa        # Vivado project + bitstream + XSA
-./build.sh --target <target> --to bootfile   # + Vitis baremetal boot image
-./build.sh --target <target> --to bootimage  # full chain incl. PetaLinux (Linux only)
-./build.sh --target <target> --status        # per-stage artifact state
-./build.sh --target <target> --clean         # delete generated outputs
+./build.sh list                            # list targets and attributes
+./build.sh xsa --target <target>        # Vivado project + bitstream + XSA
+./build.sh standalone --target <target>   # + Vitis baremetal boot image
+./build.sh all --target <target>  # full chain incl. PetaLinux (Linux only)
+./build.sh status --target <target>        # per-stage artifact state
+./build.sh clean --target <target>         # delete generated outputs
 ```
 
 Stages whose outputs already exist are skipped. On Windows the PetaLinux

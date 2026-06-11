@@ -53,12 +53,12 @@ shim locates a suitable Python 3 automatically (including the interpreter
 bundled with the AMD tools):
 
 ```
-./build.sh --list                            # list targets and attributes
-./build.sh --target <target> --to xsa        # Vivado project + bitstream + XSA
-./build.sh --target <target> --to bootfile   # + Vitis baremetal boot image
-./build.sh --target <target> --to bootimage  # + PetaLinux image, gather zips (Linux only)
-./build.sh --target <target> --status        # show per-stage artifact state
-./build.sh --target <target> --clean         # delete generated outputs
+./build.sh list                            # list targets and attributes
+./build.sh xsa --target <target>        # Vivado project + bitstream + XSA
+./build.sh standalone --target <target>   # + Vitis baremetal boot image
+./build.sh all --target <target>  # + PetaLinux image, gather zips (Linux only)
+./build.sh status --target <target>        # show per-stage artifact state
+./build.sh clean --target <target>         # delete generated outputs
 ```
 
 Stages whose outputs already exist are skipped on re-run, so the same
