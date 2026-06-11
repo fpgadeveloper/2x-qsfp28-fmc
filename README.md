@@ -66,6 +66,28 @@ below outlines the corresponding applications available in each environment:
 
 ## Build instructions
 
+
+### Quick start: cross-platform build runner (recommended)
+
+All build steps can be driven by `build.py` at the repo root, on both
+Windows (git bash) and Linux. The `build.sh` shim finds a suitable
+Python 3 automatically (including the one bundled with the AMD tools):
+
+```
+./build.sh --list                            # list targets and attributes
+./build.sh --target <target> --to xsa        # Vivado project + bitstream + XSA
+./build.sh --target <target> --to bootfile   # + Vitis baremetal boot image
+./build.sh --target <target> --to bootimage  # full chain incl. PetaLinux (Linux only)
+./build.sh --target <target> --status        # per-stage artifact state
+./build.sh --target <target> --clean         # delete generated outputs
+```
+
+Stages whose outputs already exist are skipped. On Windows the PetaLinux
+and Yocto stages are refused up front with an exact Linux hand-off command.
+The legacy `make` interface below still works on Linux (each Makefile now
+wraps `build.sh`) but is **deprecated and will be removed at the next
+version update**.
+
 Clone the repo:
 ```
 git clone https://github.com/fpgadeveloper/2x-qsfp28-fmc.git

@@ -45,6 +45,33 @@ Notes:
 2. Regardless of the Vivado Edition, the Versal Integrated MRMAC requires a (free) license to
    generate a bitstream.
 
+## Cross-platform build runner (recommended)
+
+The designs are built with the `build.py` runner at the repo root — a single
+interface that works on both Windows (git bash) and Linux. The `build.sh`
+shim locates a suitable Python 3 automatically (including the interpreter
+bundled with the AMD tools):
+
+```
+./build.sh --list                            # list targets and attributes
+./build.sh --target <target> --to xsa        # Vivado project + bitstream + XSA
+./build.sh --target <target> --to bootfile   # + Vitis baremetal boot image
+./build.sh --target <target> --to bootimage  # + PetaLinux image, gather zips (Linux only)
+./build.sh --target <target> --status        # show per-stage artifact state
+./build.sh --target <target> --clean         # delete generated outputs
+```
+
+Stages whose outputs already exist are skipped on re-run, so the same
+command continues an interrupted build. On Windows, the PetaLinux and Yocto
+stages are refused up front with the exact Linux hand-off command, and the
+runner verifies that the project path fits within the 260-character Windows
+path limit *before* building (it explains the `subst` workaround if not).
+
+```{attention} The `make` interface described in the sections below still
+works on Linux — each Makefile is now a thin wrapper around `build.sh` —
+but it is deprecated and will be removed at the next version update.
+```
+
 ## Windows users
 
 Windows users will be able to build the Vivado project, however Linux is required to build the
