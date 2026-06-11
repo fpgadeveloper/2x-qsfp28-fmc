@@ -41,9 +41,9 @@ the FMC connector on which to connect the 2x QSFP28 FMC.
 <!-- updater start -->
 ### 100G designs
 
-| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition |
-|-----------------------|--------------------|------------|-------------|-------------|-------|
-| [VCK190]              | `vck190_fmcp1`     | 100G       | 2x          | FMCP1       | Enterprise |
+| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition | IP<br>License |
+|-----------------------|--------------------|------------|-------------|-------------|-------|-------|
+| [VCK190]              | `vck190_fmcp1`     | 100G       | 2x          | FMCP1       | Enterprise | Required |
 
 [VCK190]: https://www.xilinx.com/vck190
 <!-- updater end -->

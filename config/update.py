@@ -37,13 +37,15 @@ def get_linkspeeds(data):
 def create_tables(data):
     # License dict
     to_edition = {True: "Enterprise", False: "Standard :free:"}
+    # IP license dict (separately-licensed IP cores, e.g. TEMAC/XXV/HDMI/MRMAC)
+    to_ip = {True: "Required", False: "-"}
     tables = []
     links = {}
     for linkspeed in get_linkspeeds(data):
         tables.append('### {}G designs'.format(linkspeed))
         tables.append('')
-        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition |')
-        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|')
+        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition | IP<br>License |')
+        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|-------|')
         for design in data['designs']:
             if not design['publish']:
                 continue
@@ -56,6 +58,7 @@ def create_tables(data):
                 cols.append('{0}'.format(ports).ljust(11))
                 cols.append('{0}'.format(design['connector']).ljust(11))
                 cols.append('{0}'.format(to_edition[design['license']]).ljust(5))
+                cols.append('{0}'.format(to_ip[design.get('ip_license', False)]).ljust(5))
                 tables.append('| ' + ' | '.join(cols) + ' |')
                 links[design['board']] = design['link']
         tables.append('')
