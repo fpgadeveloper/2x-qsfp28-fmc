@@ -3,7 +3,7 @@
 This section is intended for users who want to modify the reference
 design — adding IP to the block design, changing constraints, adding
 packages or drivers to the PetaLinux project, and so on. It describes
-how the repository is laid out, how the Make-driven build flow works,
+how the repository is laid out, how the build flow works,
 how the block design assembles the MRMAC subsystem, how the PetaLinux
 BSP is composed from layered fragments, and what modifications have been
 added on top of the stock AMD BSP.
@@ -16,21 +16,20 @@ it.
 
 ```
 .
-├── Makefile                   <- Top-level build entry point
+├── build.py                   <- Cross-platform build runner (the build logic)
+├── build.sh / build.bat       <- Shims that invoke build.py (Linux/git bash, Windows)
+├── Makefile                   <- Deprecated thin wrapper around build.sh (removed next version)
 ├── README.md
 ├── config/                    <- Source-of-truth design metadata and auto-generation
 │   ├── data.json
 │   └── update.py
 ├── docs/                      <- This documentation (Sphinx + Read the Docs)
 ├── PetaLinux/
-│   ├── Makefile               <- PetaLinux build orchestration
 │   └── bsp/                   <- Board and port-config BSP fragments
 │       ├── vck190/            <-   board-specific overlay
 │       ├── ports-versal-0/    <-   port-config overlay: port 0 only
 │       └── ports-versal-01/   <-   port-config overlay: ports 0 and 1
 └── Vivado/
-    ├── Makefile               <- Vivado build orchestration
-    ├── build-vivado.bat       <- Windows project-creation helper
     ├── scripts/
     │   ├── build.tcl          <- Project creation + block design assembly
     │   └── xsa.tcl            <- Synthesis, implementation, XSA export
@@ -49,8 +48,8 @@ Per-target build outputs are written to `Vivado/<target>/` and
 
 ## Target naming
 
-A `TARGET` is the canonical handle for a single design and is the only
-parameter passed through the build flow. It encodes the board and the
+A *target label* is the canonical handle for a single design and is passed
+to every build command via `--target`. It encodes the board and the
 FMC connector:
 
 ```
@@ -62,20 +61,22 @@ underscore-delimited token (`vck190`) is taken as the *target board* and
 is what `PetaLinux/Makefile` uses to select the BSP under
 `PetaLinux/bsp/<board>/`.
 
-The complete list of valid targets is in the `UPDATER START` block of
-each Makefile and is generated from `config/data.json` (see below).
+The complete list of valid targets comes from `config/data.json`; run
+`./build.sh list` (or `./build.sh labels` for one per line) to print it.
 
 ## `config/data.json` and `config/update.py`
 
 `config/data.json` is the canonical source of truth for the set of
 supported designs and their per-target metadata (board name, board URL,
-line rate, FMC connector, etc.). `config/update.py` reads `data.json`
-and regenerates the auto-managed sections of the Makefiles, the Vivado
-`build.tcl` target dictionary, the top-level `README.md`, and
-`.gitignore` — the sections delimited by `UPDATER START` / `UPDATER END`
-(or `<!-- updater start -->` / `<!-- updater end -->`) comment markers.
-The Sphinx documentation also reads `data.json` directly to render the
-supported-board and target-design tables.
+line rate, FMC connector, etc.). The `build.py` runner reads it directly
+at runtime, so the target list is never hand-maintained. `config/update.py`
+reads `data.json` and regenerates the auto-managed files that are *not*
+read at runtime: the target tables in the top-level `README.md`, the
+`.gitignore`, and the residual per-board UPDATER block still embedded in
+`PetaLinux/Makefile` — the sections delimited by `UPDATER START` /
+`UPDATER END` (or `<!-- updater start -->` / `<!-- updater end -->`)
+comment markers. The Sphinx documentation also reads `data.json` directly
+to render the supported-board and target-design tables.
 
 ```{note}
 Terminology: the `lanes` field of each design holds the list of QSFP28
@@ -93,45 +94,53 @@ regeneration. Note that `update.py` derives the PetaLinux port-config
 overlay name from the populated ports: `lanes=["0"]` selects
 `bsp/ports-versal-0/`, `lanes=["0","1"]` selects `bsp/ports-versal-01/`.
 
-## Make-driven build flow
+## Build runner
 
-There are three Makefiles in the repository, each scoped to a stage of
-the build:
+All build stages are driven by the cross-platform `build.py` runner at the
+root of the repository, invoked through the `build.sh` shim on Linux / git
+bash or `build.bat` on Windows (identical arguments). It reads the target
+list and per-target attributes straight from `config/data.json`, builds
+whatever a requested stage depends on automatically, skips anything already
+built, and locates and sources the AMD tools itself — so there is no need to
+source the Vivado / PetaLinux settings scripts beforehand.
 
-| Makefile               | Scope                                                                                  |
-|------------------------|----------------------------------------------------------------------------------------|
-| `./Makefile`           | Top-level orchestration; assembles boot-image zips for one or all targets.             |
-| `./Vivado/Makefile`    | Creates the Vivado project, runs synthesis and implementation, exports the XSA.        |
-| `./PetaLinux/Makefile` | Creates the PetaLinux project from the XSA, applies BSP overlays, builds, packages.    |
+The build is organised into stages, each available as a sub-command:
 
-A `make bootimage TARGET=<t>` invocation at the top level cascades:
+| Command     | Stage                                                                                 |
+|-------------|---------------------------------------------------------------------------------------|
+| `project`   | Create the Vivado project (`.xpr`) and block design.                                  |
+| `xsa`       | Synthesise, implement and export the hardware (`.xsa`).                                |
+| `petalinux` | Create the PetaLinux project from the XSA, apply the BSP overlays, build and package. |
+| `package`   | Gather the built boot artifacts into `bootimages/*.zip`.                               |
+| `all`       | Build every stage the target supports, then `package`.                                |
+
+Run `./build.sh list` to see the targets and their attributes, `./build.sh
+status --target <t>` for per-stage artifact state, and `./build.sh --help`
+for the full command list.
+
+Because each stage builds its prerequisites first, a single `./build.sh all
+--target <t>` cascades the whole pipeline:
 
 ```
-make bootimage TARGET=t
-  -> ensures PetaLinux build output exists
-       PetaLinux/Makefile petalinux TARGET=t
-         -> ensures Vivado XSA exists
-              Vivado/Makefile xsa TARGET=t
-                -> vivado -mode batch -source scripts/build.tcl   (creates project + block design)
-                -> vivado -mode batch -source scripts/xsa.tcl     (synth, impl, device image, XSA export)
-         -> petalinux-create --template versal --name t
-         -> petalinux-config --get-hw-description <XSA>
-         -> copy bsp/<board>/project-spec/* into the project
-         -> copy bsp/<port-config>/project-spec/* into the project   (overlay)
-         -> petalinux-config --silentconfig
-         -> petalinux-build
-         -> petalinux-package boot --plm --psmfw --u-boot --dtb
-  -> zip the resulting boot files into bootimages/
+./build.sh all --target t
+  -> xsa         : vivado creates the project + block design (build.tcl),
+                   then synth/impl/device-image/XSA export (xsa.tcl)
+  -> petalinux   : petalinux-create --template versal -> petalinux-config --get-hw-description <XSA>
+                   -> copy bsp/<board>/project-spec/* -> copy bsp/<port-config>/project-spec/* (overlay)
+                   -> petalinux-config --silentconfig -> petalinux-build
+                   -> petalinux-package boot --plm --psmfw --u-boot --dtb
+  -> package     : zip the boot files into bootimages/
 ```
 
-The dependency chain means a clean `make bootimage TARGET=t` from
-scratch will perform every step in order. Re-running after an
-intermediate step has succeeded picks up where the previous run left
-off. Per-target lock files (`.<target>.lock`) prevent two concurrent
-builds of the same target from clobbering each other.
+Build a single stage on its own with `./build.sh <stage> --target <t>`; the
+runner still builds any missing prerequisite stages first.
+
+Per-target lock files (`.<target>.lock` at the repository root) prevent two
+concurrent builds of the same target from clobbering each other — so two
+terminals can safely both run `./build.sh all --target all`.
 
 ```{tip}
-`make project TARGET=<t>` (in `Vivado/`) creates the block design and
+`./build.sh project --target <t>` creates the block design and
 runs `validate_bd_design` **without** synthesis — use it to catch
 block-design wiring errors fast before committing to the long XSA build.
 ```
@@ -340,8 +349,7 @@ After editing, delete the existing project directory and rebuild:
 
 ```
 rm -rf Vivado/<target>
-cd Vivado
-make xsa TARGET=<target>
+./build.sh xsa --target <target>
 ```
 
 ## PetaLinux side
