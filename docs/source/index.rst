@@ -18,6 +18,7 @@ port as a single 100GbE (CAUI-4) channel.
    requirements
    build_instructions
    petalinux
+   yocto
    advanced
    troubleshooting
    revision_history

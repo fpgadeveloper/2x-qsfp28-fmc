@@ -23,6 +23,7 @@
       "connector": "FMCP1",
       "group": "versal",
       "petalinux": true,
+      "yocto": true,
       "baremetal": false,
       "license": true,
       "ip_license": true,
