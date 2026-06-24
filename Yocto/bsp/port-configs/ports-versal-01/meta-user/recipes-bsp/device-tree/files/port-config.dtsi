@@ -76,9 +76,10 @@
 	gt-rx-rst-done-gpios = <&qsfp_port0_axi_gpio_gt0 6 0>;
 	xlnx,gtlane = <0>;
 };
-&qsfp_port0_mrmac_1 { status = "disabled"; };
-&qsfp_port0_mrmac_2 { status = "disabled"; };
-&qsfp_port0_mrmac_3 { status = "disabled"; };
+/* PetaLinux's DT exposed all 4 MRMAC channels (mrmac, mrmac_1..3) so the
+ * unused ones were disabled here. The EDF/lopper SDT emits only the active
+ * channel node (qsfp_port0_mrmac), so &qsfp_port0_mrmac_1/2/3 reference
+ * undefined labels (dtc: "Label or path ... not found"). Nothing to disable. */
 &qsfp_port0_axi_mcdma {
 	compatible = "xlnx,eth-dma";
 };
@@ -103,9 +104,7 @@
 	gt-rx-rst-done-gpios = <&qsfp_port1_axi_gpio_gt1 6 0>;
 	xlnx,gtlane = <0>;
 };
-&qsfp_port1_mrmac_1 { status = "disabled"; };
-&qsfp_port1_mrmac_2 { status = "disabled"; };
-&qsfp_port1_mrmac_3 { status = "disabled"; };
+/* See port 0: the EDF/lopper SDT emits only qsfp_port1_mrmac (no _1/2/3). */
 &qsfp_port1_axi_mcdma {
 	compatible = "xlnx,eth-dma";
 };
