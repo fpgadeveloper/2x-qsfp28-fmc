@@ -39,13 +39,28 @@ FMC connectors. The table below lists the target design name, the QSFP28 ports s
 the FMC connector on which to connect the 2x QSFP28 FMC.
 
 <!-- updater start -->
+### 40G designs
+
+| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | Vivado<br> Edition | IP<br>License |
+|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|
+| [ZCU102]              | `zcu102_hpc0`      | 40G        | 2x          | HPC0        | :white_check_mark: | Enterprise | Required |
+| [ZCU106]              | `zcu106_hpc0`      | 40G        | 2x          | HPC0        | :white_check_mark: | Standard :free: | Required |
+
 ### 100G designs
 
 | Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | Vivado<br> Edition | IP<br>License |
 |-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|
 | [VCK190]              | `vck190_fmcp1`     | 100G       | 2x          | FMCP1       | :white_check_mark: | Enterprise | Required |
+| [ZCU111]              | `zcu111`           | 100G       | 2x          | FMCP        | :white_check_mark: | Enterprise | Required |
+| [ZCU208]              | `zcu208`           | 100G       | 1x          | FMCP        | :white_check_mark: | Enterprise | Required |
+| [ZCU216]              | `zcu216`           | 100G       | 1x          | FMCP        | :white_check_mark: | Enterprise | Required |
 
+[ZCU102]: https://www.xilinx.com/zcu102
+[ZCU106]: https://www.xilinx.com/zcu106
 [VCK190]: https://www.xilinx.com/vck190
+[ZCU111]: https://www.xilinx.com/zcu111
+[ZCU208]: https://www.xilinx.com/zcu208
+[ZCU216]: https://www.xilinx.com/zcu216
 <!-- updater end -->
 
 Notes:

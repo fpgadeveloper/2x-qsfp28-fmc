@@ -13,6 +13,16 @@ PetaLinux/offline.txt
 # UPDATER START
 Vivado/vck190_fmcp1/
 PetaLinux/vck190_fmcp1/
+Vivado/zcu111/
+PetaLinux/zcu111/
+Vivado/zcu208/
+PetaLinux/zcu208/
+Vivado/zcu216/
+PetaLinux/zcu216/
+Vivado/zcu102_hpc0/
+PetaLinux/zcu102_hpc0/
+Vivado/zcu106_hpc0/
+PetaLinux/zcu106_hpc0/
 # UPDATER END
 dfx_runtime.txt
 .repo.yaml

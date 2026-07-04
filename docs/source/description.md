@@ -1,10 +1,13 @@
 # Description
 
-In this reference design, each port of the [2x QSFP28 FMC] is driven by the Versal
+In this reference design, each port of the [2x QSFP28 FMC] is driven by a hardened or soft
+Ethernet MAC that depends on the target device family: on Versal, the
 [Integrated 100G Multirate Ethernet MAC (MRMAC)] configured for a single 100GbE (CAUI-4)
-channel. All four GTY transceiver lanes of a QSFP28 port are bonded into one 100G MAC. Packet
-data is moved to and from system memory (DDR) by an AXI MCDMA, through the Versal NoC, and the
-ports are driven under PetaLinux by the AXI Ethernet (`xilinx_axienet`) driver.
+channel; on the Zynq UltraScale+ RFSoC boards, the UltraScale+ Integrated 100G Ethernet
+(CMAC) hard block; and on the GTH-based ZynqMP boards (ZCU102/ZCU106), the 40G/50G High
+Speed Ethernet Subsystem at 40G. All four transceiver lanes of a QSFP28 port are bonded into
+one MAC. Packet data is moved to and from system memory (DDR) by an AXI MCDMA and the
+ports are driven under Linux by the AXI Ethernet (`xilinx_axienet`) driver.
 
 This contrasts with the Opsero [Quad SFP28 FMC] reference design, which uses the 10G/25G Ethernet
 Subsystem with one independent channel per SFP28 port. Here, the 100G data rate per port and the
@@ -38,6 +41,31 @@ Each of the two QSFP28 ports is an independent, identical 100G subsystem:
   An AXI IIC controller per port reaches the QSFP module management bus, a shared AXI IIC reaches
   the Si5328, and the QSFP module sideband signals plus user LEDs (link status) are driven from
   AXI GPIO — held out of reset at power-on so an inserted optical module/AOC comes up enabled.
+
+## ZynqMP targets (ZCU111, ZCU208, ZCU216, ZCU102, ZCU106)
+
+ZynqMP devices have no MRMAC, so these targets use a different MAC while keeping the same
+architecture (per-port MAC + AXI MCDMA to DDR, CPU handles all packets):
+
+* **RFSoC boards (ZCU111/ZCU208/ZCU216) — 100G CMAC.** Each active port is an UltraScale+
+  Integrated 100G Ethernet (CMAC) hard block in CAUI-4 mode (4 GTY lanes at 25.78125 Gb/s,
+  322.265625 MHz refclk) with its in-core GT quad and a standard 512-bit AXI4-Stream client —
+  no custom RTL adapters are needed. On the ZCU111 both ports run 100G; on the ZCU208/ZCU216
+  only one of the two CMAC blocks can physically reach the FMC+ GT quads, so those targets
+  implement a single 100G port (QSFP port 0) and hold the port 1 module in reset.
+* **ZCU102/ZCU106 — 2x 40G.** The GTH transceivers on these boards max out below the 25.78125
+  Gb/s CAUI-4 lane rate, so each port is a 40G/50G High Speed Ethernet Subsystem (soft
+  MAC/PCS) in 40GBASE-R4 mode (4 GTH lanes at 10.3125 Gb/s, 156.25 MHz refclk) with a 256-bit
+  AXI4-Stream client. This core requires an AMD license (an evaluation license works for
+  testing).
+* **Datapath to DDR.** Per port, an asynchronous CDC FIFO (plus a 512↔256-bit width converter
+  on the 40G targets) bridges the MAC client clock to the 100 MHz system clock, where a
+  512-bit AXI MCDMA moves packet data to and from the PS DDR through its own `S_AXI_HPx_FPD`
+  port.
+* **Linux driver.** The ports are driven by the same `xilinx_axienet` driver as the Versal
+  MRMAC targets; CMAC / 40G-50G MAC support is added by a kernel patch carried in the Yocto
+  board BSPs, including a carrier monitor that brings the link up automatically once the
+  Si5328 reference clock is programmed and a partner signal is present.
 
 ## Supported Hardware Platforms
 

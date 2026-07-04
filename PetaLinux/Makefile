@@ -13,6 +13,7 @@ JOBS ?= 8
 
 # valid targets (template name, flash size, flash interface, port config)
 # UPDATER START
+# 40G designs
 # 100G designs
 vck190_fmcp1_target := versal 0 0 ports-versal-01
 # UPDATER END

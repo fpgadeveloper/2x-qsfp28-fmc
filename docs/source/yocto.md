@@ -3,17 +3,33 @@
 The Yocto / EDF flow (AMD's Embedded Development Framework) is the announced successor to
 PetaLinux. It can be built for the 2x QSFP28 FMC reference design with the cross-platform
 `build.py` runner at the root of the repository, and produces a Linux image that exercises the
-100G MRMAC QSFP28 ports in exactly the same way as the PetaLinux flow.
+QSFP28 ports through the `xilinx_axienet` driver and MCDMA datapath.
 
 ```{note}
-For 2025.2 both the PetaLinux and Yocto flows are supported and produce an equivalent
-image. From the next tool version onward, the PetaLinux flow for this repository will be retired
-and Yocto will be the only supported flow.
+For 2025.2 both the PetaLinux (VCK190 only) and Yocto flows are supported and produce an
+equivalent image. From the next tool version onward, the PetaLinux flow for this repository
+will be retired and Yocto will be the only supported flow.
 ```
 
-The Yocto flow is supported for the Versal target (`vck190_fmcp1`), the same set that has
-PetaLinux support. The MRMAC ports are driven by the same `xilinx_axienet` driver and MCDMA
-datapath as in the PetaLinux flow.
+The Yocto flow is supported for ALL targets. The MAC depends on the target device family:
+
+| Target(s) | MAC | Link rate |
+| --- | --- | --- |
+| `vck190_fmcp1` | Versal Integrated MRMAC (hard block) | 2x 100G |
+| `zcu111` | UltraScale+ Integrated 100G Ethernet (CMAC hard block) | 2x 100G |
+| `zcu208`, `zcu216` | UltraScale+ Integrated 100G Ethernet (CMAC hard block) | 1x 100G (port 0) |
+| `zcu102_hpc0`, `zcu106_hpc0` | 40G/50G High Speed Ethernet Subsystem (soft MAC) | 2x 40G |
+
+The MRMAC is supported natively by the `xilinx_axienet` driver; for the ZynqMP targets the
+CMAC / 40G-50G MAC support is added by a kernel patch carried in the board BSPs
+(`Yocto/bsp/<board>/meta-user/recipes-kernel/linux/`).
+
+```{note}
+On the ZCU208 and ZCU216 (ZU48DR/ZU49DR) only one of the two integrated CMAC blocks can
+physically reach the FMC+ GT quads, so these targets implement a single 100G port (QSFP
+port 0); the QSFP port 1 module is held in reset. The ZCU102/ZCU106 have GTH transceivers
+(max ~16 Gb/s per lane), so their QSFP28 ports run at 40G (40GBASE-R4).
+```
 
 ## Requirements
 

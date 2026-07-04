@@ -5,6 +5,10 @@
     {
       "label": "versal",
       "name": "Versal"
+    },
+    {
+      "label": "zu",
+      "name": "Zynq UltraScale+"
     }
   ],
   "designs": [
@@ -27,6 +31,119 @@
       "portcfg": "ports-versal-01",
       "baremetal": false,
       "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu111",
+      "board": "ZCU111",
+      "link": "https://www.xilinx.com/zcu111",
+      "url": "xilinx.com",
+      "boardname": "zcu111",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "100",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu100g-01",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu208",
+      "board": "ZCU208",
+      "link": "https://www.xilinx.com/zcu208",
+      "url": "xilinx.com",
+      "boardname": "zcu208",
+      "lanes": [
+        0
+      ],
+      "linkspeed": "100",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu100g-0",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu216",
+      "board": "ZCU216",
+      "link": "https://www.xilinx.com/zcu216",
+      "url": "xilinx.com",
+      "boardname": "zcu216",
+      "lanes": [
+        0
+      ],
+      "linkspeed": "100",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu100g-0",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu102_hpc0",
+      "board": "ZCU102",
+      "link": "https://www.xilinx.com/zcu102",
+      "url": "xilinx.com",
+      "boardname": "zcu102",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "40",
+      "connector": "HPC0",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu40g-01",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu106_hpc0",
+      "board": "ZCU106",
+      "link": "https://www.xilinx.com/zcu106",
+      "url": "xilinx.com",
+      "boardname": "zcu106",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "40",
+      "connector": "HPC0",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu40g-01",
+      "baremetal": false,
+      "license": false,
       "ip_license": true,
       "flashsize": "0",
       "flashintf": "0"

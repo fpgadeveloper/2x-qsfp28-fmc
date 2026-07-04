@@ -35,8 +35,14 @@ set_param board.repoPaths [get_property LOCAL_ROOT_DIR [xhub::get_xstores xilinx
 
 # Possible targets
 # UPDATER START
+# 40G designs
+dict set target_dict zcu102_hpc0 { xilinx.com zcu102 zynqmp { 0 1 } "40" }
+dict set target_dict zcu106_hpc0 { xilinx.com zcu106 zynqmp { 0 1 } "40" }
 # 100G designs
 dict set target_dict vck190_fmcp1 { xilinx.com vck190 versal { 0 1 } "100" }
+dict set target_dict zcu111 { xilinx.com zcu111 zynqmp { 0 1 } "100" }
+dict set target_dict zcu208 { xilinx.com zcu208 zynqmp { 0 } "100" }
+dict set target_dict zcu216 { xilinx.com zcu216 zynqmp { 0 } "100" }
 # UPDATER END
 
 # Function to display the options and get user input

@@ -1,8 +1,13 @@
 # Yocto / EDF builds
 
-This folder builds Linux images for the 2x QSFP28 FMC (100G MRMAC Ethernet)
-reference design using the AMD Yocto / Embedded Development Framework (EDF) flow
-— the announced successor to PetaLinux Tools.
+This folder builds Linux images for the 2x QSFP28 FMC reference design using
+the AMD Yocto / Embedded Development Framework (EDF) flow — the announced
+successor to PetaLinux Tools. All targets are supported: VCK190 (2x 100G
+MRMAC), ZCU111 (2x 100G CMAC), ZCU208/ZCU216 (1x 100G CMAC — only one CMAC
+reaches the FMC+ GT quads on ZU48DR/ZU49DR), and ZCU102/ZCU106 (2x 40G via the
+40G/50G Ethernet subsystem). On the ZynqMP targets the MAC support (CMAC /
+l_ethernet) comes from an `xilinx_axienet` kernel patch carried in each board
+BSP under `bsp/<board>/meta-user/recipes-kernel/linux/`.
 
 ## How it works: the parse-sdt flow
 
