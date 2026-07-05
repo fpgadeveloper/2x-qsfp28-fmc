@@ -3,9 +3,11 @@
 In this reference design, each port of the [2x QSFP28 FMC] is driven by a hardened or soft
 Ethernet MAC that depends on the target device family: on Versal, the
 [Integrated 100G Multirate Ethernet MAC (MRMAC)] configured for a single 100GbE (CAUI-4)
-channel; on the Zynq UltraScale+ RFSoC boards, the UltraScale+ Integrated 100G Ethernet
-(CMAC) hard block; and on the GTH-based ZynqMP boards (ZCU102/ZCU106), the 40G/50G High
-Speed Ethernet Subsystem at 40G. All four transceiver lanes of a QSFP28 port are bonded into
+channel; on the Zynq UltraScale+ RFSoC boards and the Kintex UltraScale+ KCU116, the
+UltraScale+ Integrated 100G Ethernet (CMAC) hard block; and on the GTH-based ZynqMP boards
+(ZCU102/ZCU106), the 40G/50G High Speed Ethernet Subsystem at 40G. Every CMAC target also
+has an `_ss`-suffixed variant that swaps the CMAC for the 40G/50G High Speed Ethernet
+Subsystem at 40G (see below). All four transceiver lanes of a QSFP28 port are bonded into
 one MAC. Packet data is moved to and from system memory (DDR) by an AXI MCDMA and the
 ports are driven under Linux by the AXI Ethernet (`xilinx_axienet`) driver.
 
@@ -58,6 +60,10 @@ architecture (per-port MAC + AXI MCDMA to DDR, CPU handles all packets):
   MAC/PCS) in 40GBASE-R4 mode (4 GTH lanes at 10.3125 Gb/s, 156.25 MHz refclk) with a 256-bit
   AXI4-Stream client. This core requires an AMD license (an evaluation license works for
   testing).
+* **RFSoC `_ss` variants (zcu111_ss/zcu208_ss/zcu216_ss) — 2x 40G.** These swap the CMAC for
+  the same 40G/50G Ethernet Subsystem, running the QSFP28 ports at 40G over the GTY lanes.
+  Because the soft MAC has no CMAC placement restriction, the ZCU208/ZCU216 `_ss` variants
+  enable **both** QSFP28 ports — where the 100G CMAC targets are single-port.
 * **Datapath to DDR.** Per port, an asynchronous CDC FIFO (plus a 512↔256-bit width converter
   on the 40G targets) bridges the MAC client clock to the 100 MHz system clock, where a
   512-bit AXI MCDMA moves packet data to and from the PS DDR through its own `S_AXI_HPx_FPD`
@@ -66,6 +72,26 @@ architecture (per-port MAC + AXI MCDMA to DDR, CPU handles all packets):
   MRMAC targets; CMAC / 40G-50G MAC support is added by a kernel patch carried in the Yocto
   board BSPs, including a carrier monitor that brings the link up automatically once the
   Si5328 reference clock is programmed and a partner signal is present.
+
+## MicroBlaze target (KCU116)
+
+The Kintex UltraScale+ KCU116 has no processor system, so the `kcu116` (100G CMAC) and
+`kcu116_ss` (40G subsystem) targets instantiate a Linux-capable MicroBlaze soft CPU (MMU +
+caches) running from the board's 1GB DDR4 (MIG), with the same per-port MAC + AXI MCDMA
+datapath as the other targets, plus an AXI UART16550 console, AXI timer/interrupt
+controller and an AXI Quad SPI reaching the board's configuration flash through the
+STARTUPE3 primitive (for flash boot and Linux MTD access):
+
+* The KCU116 FMC HPC connector wires only DP0-3 (one GTY quad, bank 227), so both KCU116
+  targets are **single-port** (QSFP slot 0); the QSFP slot 1 module is held in reset.
+* The KU5P device's single CMAC (`CMACE4_X0Y0`) reaches the FMC quad, giving a true 100G
+  hard-MAC port on a Standard-Edition (free Vivado license) device.
+* These targets build Linux with **PetaLinux** (classic MicroBlaze flow). The AMD EDF Yocto
+  flow in 2025.2 does not yet support Linux on MicroBlaze, so the Yocto build is not
+  offered for KCU116 in this release.
+* The KCU116's microSD slot is connected to the board's system controller (not the FPGA),
+  so Linux runs with its root filesystem in RAM (initramfs). Boot from the QSPI flash
+  (`boot.mcs`) or over JTAG.
 
 ## Supported Hardware Platforms
 
@@ -89,9 +115,11 @@ the design for the supported platform(s):
 {% endif %}
 {% endfor %}
 
-The 2x QSFP28 FMC requires a carrier board whose FMC connector routes eight gigabit transceivers
-(two QSFP28 ports × four lanes) capable of 25.78125 Gb/s, and an AMD device that contains the
-integrated MRMAC. The VCK190 satisfies both via its FMCP1 connector.
+For two ports at 100G, the 2x QSFP28 FMC requires a carrier board whose FMC connector routes
+eight gigabit transceivers (two QSFP28 ports × four lanes) capable of 25.78125 Gb/s, and an
+AMD device with an integrated MRMAC or CMAC that can reach those transceivers. Boards that
+route fewer lanes (KCU116: four) or slower transceivers (ZCU102/ZCU106: GTH) are supported
+with fewer ports and/or the 40G subsystem MAC, as described above.
 
 ## Supported Software
 

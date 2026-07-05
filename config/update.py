@@ -46,8 +46,8 @@ def create_tables(data):
     for linkspeed in get_linkspeeds(data):
         tables.append('### {}G designs'.format(linkspeed))
         tables.append('')
-        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | Vivado<br> Edition | IP<br>License |')
-        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|')
+        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | PetaLinux | Vivado<br> Edition | IP<br>License |')
+        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|-------|')
         for design in data['designs']:
             if not design['publish']:
                 continue
@@ -60,6 +60,7 @@ def create_tables(data):
                 cols.append('{0}'.format(ports).ljust(11))
                 cols.append('{0}'.format(design['connector']).ljust(11))
                 cols.append('{0}'.format(to_emoji[design.get('yocto', False)]).ljust(5))
+                cols.append('{0}'.format(to_emoji[design.get('petalinux', False)]).ljust(5))
                 cols.append('{0}'.format(to_edition[design['license']]).ljust(5))
                 cols.append('{0}'.format(to_ip[design.get('ip_license', False)]).ljust(5))
                 tables.append('| ' + ' | '.join(cols) + ' |')

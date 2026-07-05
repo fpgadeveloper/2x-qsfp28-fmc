@@ -9,6 +9,10 @@
     {
       "label": "zu",
       "name": "Zynq UltraScale+"
+    },
+    {
+      "label": "fpga",
+      "name": "FPGA"
     }
   ],
   "designs": [
@@ -104,6 +108,28 @@
     },
     {
       "publish": true,
+      "label": "kcu116",
+      "board": "KCU116",
+      "link": "https://www.xilinx.com/kcu116",
+      "url": "xilinx.com",
+      "boardname": "kcu116",
+      "lanes": [
+        0
+      ],
+      "linkspeed": "100",
+      "connector": "HPC",
+      "group": "fpga",
+      "petalinux": true,
+      "yocto": false,
+      "portcfg": "ports-mb100g-0",
+      "baremetal": false,
+      "license": false,
+      "ip_license": true,
+      "flashsize": "32",
+      "flashintf": "SPIx4"
+    },
+    {
+      "publish": true,
       "label": "zcu102_hpc0",
       "board": "ZCU102",
       "link": "https://www.xilinx.com/zcu102",
@@ -147,6 +173,97 @@
       "ip_license": true,
       "flashsize": "0",
       "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu111_ss",
+      "board": "ZCU111",
+      "link": "https://www.xilinx.com/zcu111",
+      "url": "xilinx.com",
+      "boardname": "zcu111",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "40",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu40g-01",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu208_ss",
+      "board": "ZCU208",
+      "link": "https://www.xilinx.com/zcu208",
+      "url": "xilinx.com",
+      "boardname": "zcu208",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "40",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu40g-01",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "zcu216_ss",
+      "board": "ZCU216",
+      "link": "https://www.xilinx.com/zcu216",
+      "url": "xilinx.com",
+      "boardname": "zcu216",
+      "lanes": [
+        0,
+        1
+      ],
+      "linkspeed": "40",
+      "connector": "FMCP",
+      "group": "zu",
+      "petalinux": false,
+      "yocto": true,
+      "portcfg": "ports-zu40g-01",
+      "baremetal": false,
+      "license": true,
+      "ip_license": true,
+      "flashsize": "0",
+      "flashintf": "0"
+    },
+    {
+      "publish": true,
+      "label": "kcu116_ss",
+      "board": "KCU116",
+      "link": "https://www.xilinx.com/kcu116",
+      "url": "xilinx.com",
+      "boardname": "kcu116",
+      "lanes": [
+        0
+      ],
+      "linkspeed": "40",
+      "connector": "HPC",
+      "group": "fpga",
+      "petalinux": true,
+      "yocto": false,
+      "portcfg": "ports-mb40g-0",
+      "baremetal": false,
+      "license": false,
+      "ip_license": true,
+      "flashsize": "32",
+      "flashintf": "SPIx4"
     }
   ]
 }

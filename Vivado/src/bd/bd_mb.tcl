@@ -1,39 +1,41 @@
 ################################################################
-# Block design build script for Zynq UltraScale+ QSFP28 designs
+# Block design build script for MicroBlaze (pure FPGA) QSFP28 designs
 #
 # Opsero 2x QSFP28 FMC reference design.
 #
 # This script is sourced by build.tcl, which sets:
 #   block_name = qsfp
-#   board_name = zcu111 | zcu208 | zcu216 | zcu102 | zcu106
-#   target     = zcu111 | zcu208 | zcu216 | zcu102_hpc0 | zcu106_hpc0
-#                | zcu111_ss | zcu208_ss | zcu216_ss
-#   ports      = { 0 } or { 0 1 }
+#   board_name = kcu116
+#   target     = kcu116 | kcu116_ss
+#   ports      = { 0 }
 #   line_rate  = 100 | 40
 #
-# ZynqMP has no MRMAC hard block, so the MAC depends on the line rate:
-#   line_rate 100 (RFSoC: ZCU111/ZCU208/ZCU216, GTY):
+# Boards without a hard processor system get a Linux-capable classic
+# MicroBlaze (MMU, caches, barrel/div/mul) running from the board DDR4
+# (MIG), with the same per-port QSFP MAC + AXI MCDMA datapath as the
+# ZynqMP designs. The MAC depends on the line rate:
+#   line_rate 100 (kcu116, GTY):
 #     UltraScale+ Integrated 100G Ethernet (cmac_usplus) hard block, CAUI-4
 #     (4 lanes x 25.78125 Gb/s, GT refclk 322.265625 MHz), AXIS user
-#     interface (512-bit) + AXI4-Lite control.
-#     NOTE: only CMACE4_X0Y1 can reach GT quads X0Y12-15/X0Y16-19 (the IP
-#     restricts CMACE4_X0Y0 to X0Y4-11 on all three devices), which is why
-#     ZCU208/ZCU216 - whose FMC+ lanes sit on X0Y12-19 - are single-port
-#     (2x100G is not physically possible there); ZCU111 (X0Y8-15) gets both.
-#   line_rate 40 (ZCU102/ZCU106 on GTH; _ss variants of the RFSoC boards
-#   on GTY):
+#     interface (512-bit) + AXI4-Lite control. The KU5P has a single CMAC
+#     (CMACE4_X0Y0) which reaches the FMC quad X0Y12-15 (bank 227) via the
+#     IP's CAUI-4 GT group X0Y12~X0Y15 (verified against the cmac_usplus
+#     customization rules for xcku5p-ffvb676-2-e).
+#   line_rate 40 (kcu116_ss, GTY):
 #     40G/50G High Speed Ethernet Subsystem (l_ethernet) soft MAC/PCS,
 #     40GBASE-R4 (4 lanes x 10.3125 Gb/s, GT refclk 156.25 MHz), 256-bit
-#     regular AXI4-Stream + AXI4-Lite control. The soft MAC has no CMAC
-#     placement restriction, so the RFSoC _ss variants enable BOTH QSFP28
-#     ports - including on ZCU208/ZCU216 where the 100G target is
-#     single-port.
+#     regular AXI4-Stream + AXI4-Lite control.
 #
-# Both MACs present a standard AXI4-Stream client (no MRMAC-style custom
-# adapters needed). Each QSFP port gets an AXI MCDMA datapath to the PS DDR
-# via its own S_AXI_HPx_FPD port; the CPU handles all packets through the
-# Linux xilinx_axienet driver (CMAC/l_ethernet support added by a kernel
-# patch carried in the Yocto BSP).
+# The KCU116 FMC HPC wires only DP0-3 (one GTY quad), so these designs are
+# single-port (QSFP slot 0); the QSFP1 module is held in reset / low-power.
+#
+# System: DDR4 MIG from the board preset (sys clock default_sysclk1_300);
+# MicroBlaze + peripherals + the whole MCDMA datapath run on the MIG's
+# additional 100 MHz user clock (mirrors the 100 MHz sys_clk of the
+# ZynqMP/Versal designs); axi_uart16550 console, axi_timer (Linux
+# clockevent), axi_intc. The CPU handles all packets through the Linux
+# xilinx_axienet driver (CMAC/l_ethernet support added by a kernel patch
+# carried in the Yocto BSP).
 ################################################################
 
 # CHECKING IF PROJECT EXISTS
@@ -71,42 +73,25 @@ proc str_contains {str substr} {
 # Number of ports
 set num_ports [llength $ports]
 
-# List of interrupt pins (wired to pl_ps_irq0, max 8)
+# List of interrupt pins (wired to the MicroBlaze axi_intc concat)
 set intr_list {}
 
 # Per-target GT placement.
 #
-# 100G (cmac_usplus): port -> {CMAC_CORE_SELECT GT_GROUP_SELECT}. The FMC DP
-# lanes of each port sit in one full GTY quad with that port's GBTCLK in the
-# same quad (checked against the board pinouts and the device package files):
-#   ZCU111 (ZU28DR): port 0 = bank 129 (X0Y8-11),  port 1 = bank 130 (X0Y12-15)
-#   ZCU208 (ZU48DR): port 0 = bank 130 (X0Y12-15)  [port 1 = bank 131, no CMAC reach]
-#   ZCU216 (ZU49DR): port 0 = bank 130 (X0Y12-15)  [port 1 = bank 131, no CMAC reach]
+# 100G (cmac_usplus): port -> {CMAC_CORE_SELECT GT_GROUP_SELECT}.
+#   KCU116 (KU5P): port 0 = bank 227 (X0Y12-15), CMACE4_X0Y0 (the only CMAC)
 set cmac_map [dict create \
-  zcu111 {0 {CMACE4_X0Y0 X0Y8~X0Y11} 1 {CMACE4_X0Y1 X0Y12~X0Y15}} \
-  zcu208 {0 {CMACE4_X0Y1 X0Y12~X0Y15}} \
-  zcu216 {0 {CMACE4_X0Y1 X0Y12~X0Y15}} \
+  kcu116 {0 {CMACE4_X0Y0 X0Y12~X0Y15}} \
 ]
 
-# 40G (l_ethernet): port -> GT_GROUP_SELECT (one full GT quad per port).
-# GTH boards:
-#   ZCU102 (ZU9EG): port 0 = bank 229 (Quad_X1Y2), port 1 = bank 228 (Quad_X1Y1)
-#   ZCU106 (ZU7EV): port 0 = bank 226 (Quad_X0Y3), port 1 = bank 227 (Quad_X0Y4)
-# GTY boards (RFSoC _ss variants; quads verified against the l_ethernet
-# customization rules for each device):
-#   ZCU111 (ZU28DR): port 0 = bank 129 (Quad_X0Y2), port 1 = bank 130 (Quad_X0Y3)
-#   ZCU208 (ZU48DR): port 0 = bank 130 (Quad_X0Y3), port 1 = bank 131 (Quad_X0Y4)
-#   ZCU216 (ZU49DR): port 0 = bank 130 (Quad_X0Y3), port 1 = bank 131 (Quad_X0Y4)
+# 40G (l_ethernet): port -> GT_GROUP_SELECT (one full GTY quad per port).
+#   KCU116 (KU5P): port 0 = bank 227 (Quad_X0Y3)
 set leth_map [dict create \
-  zcu102_hpc0 {0 Quad_X1Y2 1 Quad_X1Y1} \
-  zcu106_hpc0 {0 Quad_X0Y3 1 Quad_X0Y4} \
-  zcu111_ss   {0 Quad_X0Y2 1 Quad_X0Y3} \
-  zcu208_ss   {0 Quad_X0Y3 1 Quad_X0Y4} \
-  zcu216_ss   {0 Quad_X0Y3 1 Quad_X0Y4} \
+  kcu116_ss {0 Quad_X0Y3} \
 ]
 
-# GT reference clock frequency (from the FMC Si5328: GBTCLK0 -> port 0,
-# GBTCLK1 -> port 1; the port-config.dtsi programs the Si5328 to this value).
+# GT reference clock frequency (from the FMC Si5328: GBTCLK0 -> port 0;
+# the port-config.dtsi programs the Si5328 to this value).
 if {$line_rate == "100"} {
   set gt_refclk_hz 322265625
   set gt_refclk_mhz 322.265625
@@ -115,41 +100,78 @@ if {$line_rate == "100"} {
   set gt_refclk_mhz 156.25
 }
 
-# Add the Processor System and apply board preset
-create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e zynq_ultra_ps_e_0
-apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ultra_ps_e_0]
-
-# Configure the PS: HPM0 LPD for AXI-Lite control, one HPx FPD port per QSFP
-# port for the MCDMA datapath, PL-PS interrupts on IRQ0.
+#########################################################
+# DDR4 MIG (board preset) + system clocks
+#########################################################
+# The MIG generates the 100MHz system clock (addn_ui_clkout1) that clocks
+# the MicroBlaze, all AXI-Lite control and the MCDMA/DDR datapath - the
+# same single-sys_clk architecture as the ZynqMP/Versal designs.
+create_bd_cell -type ip -vlnv xilinx.com:ip:ddr4 ddr4_0
+apply_bd_automation -rule xilinx.com:bd_rule:board -config { Board_Interface {default_sysclk1_300 ( 300 MHz System differential clock ) } Manual_Source {Auto}}  [get_bd_intf_pins ddr4_0/C0_SYS_CLK]
+apply_bd_automation -rule xilinx.com:bd_rule:board -config { Board_Interface {ddr4_sdram_075 ( DDR4 SDRAM C1 ) } Manual_Source {Auto}}  [get_bd_intf_pins ddr4_0/C0_DDR4]
+# addn_ui_clkout1 = 100MHz system clock; addn_ui_clkout2 = 50MHz for the
+# QSPI controller's ext_spi_clk (SCK = ext_spi_clk / C_SCK_RATIO = 25MHz).
 set_property -dict [list \
-  CONFIG.PSU__USE__M_AXI_GP0 {0} \
-  CONFIG.PSU__USE__M_AXI_GP1 {0} \
-  CONFIG.PSU__USE__M_AXI_GP2 {1} \
-  CONFIG.PSU__USE__IRQ0 {1} \
-  CONFIG.PSU__HIGH_ADDRESS__ENABLE {1} \
-] [get_bd_cells zynq_ultra_ps_e_0]
+  CONFIG.ADDN_UI_CLKOUT1_FREQ_HZ {100} \
+  CONFIG.ADDN_UI_CLKOUT2_FREQ_HZ {50} \
+] [get_bd_cells ddr4_0]
 
-# System clock (pl_clk0, 100MHz) - all AXI-Lite control and the MCDMA/HP
-# datapath run in this domain (mirrors the vck190 design's 100MHz sys_clk).
-set sys_clk "zynq_ultra_ps_e_0/pl_clk0"
+# Board reset (CPU_RESET pushbutton) -> MIG sys_rst
+apply_bd_automation -rule xilinx.com:bd_rule:board -config { Board_Interface {reset ( FPGA Reset ) } Manual_Source {Auto}}  [get_bd_pins ddr4_0/sys_rst]
 
-# Proc system reset for the system clock
-create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_ps_100m
-connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins rst_ps_100m/slowest_sync_clk]
-connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0] [get_bd_pins rst_ps_100m/ext_reset_in]
+#########################################################
+# MicroBlaze (Linux-capable: MMU + caches)
+#########################################################
+create_bd_cell -type ip -vlnv xilinx.com:ip:microblaze microblaze_0
+apply_bd_automation -rule xilinx.com:bd_rule:microblaze -config { axi_intc {1} axi_periph {Enabled} cache {64KB} clk {/ddr4_0/addn_ui_clkout1 (100 MHz)} cores {1} debug_module {Debug Only} ecc {None} local_mem {64KB} preset {None}}  [get_bd_cells microblaze_0]
+# Cached path to the DDR4 (creates SmartConnect axi_smc: S00=DC, S01=IC)
+apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config { Clk_master {/ddr4_0/addn_ui_clkout1 (100 MHz)} Clk_slave {/ddr4_0/c0_ddr4_ui_clk (300 MHz)} Clk_xbar {Auto} Master {/microblaze_0 (Cached)} Slave {/ddr4_0/C0_DDR4_S_AXI} ddr_seg {Auto} intc_ip {New AXI SmartConnect} master_apm {0}}  [get_bd_intf_pins ddr4_0/C0_DDR4_S_AXI]
 
-# Connect the HPM0 LPD clock
-connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_lpd_aclk]
+# Linux-capable MicroBlaze configuration (same as the Opsero MicroBlaze
+# reference designs): MMU with 2 zones, full barrel/div/mul, exceptions,
+# cache victims/streams for performance.
+set_property -dict [list \
+CONFIG.C_USE_MSR_INSTR {1} \
+CONFIG.C_USE_PCMP_INSTR {1} \
+CONFIG.C_USE_BARREL {1} \
+CONFIG.C_USE_DIV {1} \
+CONFIG.C_USE_HW_MUL {2} \
+CONFIG.C_UNALIGNED_EXCEPTIONS {1} \
+CONFIG.C_ILL_OPCODE_EXCEPTION {1} \
+CONFIG.C_M_AXI_I_BUS_EXCEPTION {1} \
+CONFIG.C_M_AXI_D_BUS_EXCEPTION {1} \
+CONFIG.C_DIV_ZERO_EXCEPTION {1} \
+CONFIG.C_PVR {2} \
+CONFIG.C_OPCODE_0x0_ILLEGAL {1} \
+CONFIG.C_ICACHE_LINE_LEN {8} \
+CONFIG.C_ICACHE_VICTIMS {8} \
+CONFIG.C_ICACHE_STREAMS {1} \
+CONFIG.C_DCACHE_VICTIMS {8} \
+CONFIG.C_USE_MMU {3} \
+CONFIG.C_MMU_ZONES {2}] [get_bd_cells microblaze_0]
 
-# AXI SmartConnect for the AXI-Lite control interfaces. Masters are allocated
-# with a running counter (smc_mi): per QSFP port -> {port control aggregate,
-# qsfp sideband GPIO, qsfp module I2C} = 3 each, plus 1 shared Si5328 clk I2C.
-create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect axi_smc
-set_property -dict [list CONFIG.NUM_MI [expr {3 * $num_ports + 1}] CONFIG.NUM_SI {1} ] [get_bd_cells axi_smc]
-connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_smc/aclk]
-connect_bd_net [get_bd_pins rst_ps_100m/interconnect_aresetn] [get_bd_pins axi_smc/aresetn]
-connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_LPD] [get_bd_intf_pins axi_smc/S00_AXI]
-set smc_mi 0
+# External reset port (created by the sys_rst board automation) also drives
+# the 100MHz proc_sys_reset created by the MicroBlaze automation.
+connect_bd_net [get_bd_ports reset] [get_bd_pins rst_ddr4_0_100M/ext_reset_in]
+
+# System clock (100MHz from the MIG) - all AXI-Lite control and the
+# MCDMA datapath run in this domain.
+set sys_clk "ddr4_0/addn_ui_clkout1"
+set periph_rstn "rst_ddr4_0_100M/peripheral_aresetn"
+set periph_rst "rst_ddr4_0_100M/peripheral_reset"
+set intercon_rstn "rst_ddr4_0_100M/interconnect_aresetn"
+
+# The MicroBlaze automation created the peripheral SmartConnect
+# "microblaze_0_axi_periph" (S00 = MB M_AXI_DP, M00 = axi_intc). All the
+# AXI-Lite control interfaces hang off it: grow it by one master per
+# peripheral, allocated with a running counter (BD automation cannot map
+# through the QSFP port hierarchy's inner SmartConnect, so the wiring is
+# manual - same style as the ZynqMP/Versal scripts).
+#   per QSFP port: {port control aggregate, qsfp sideband GPIO, qsfp module
+#   I2C} = 3, plus {Si5328 clk I2C, UART16550, timer, QSPI flash, reset
+#   GPIO} = 5.
+set periph_mi 1
+set_property CONFIG.NUM_MI [expr {1 + 3 * $num_ports + 5}] [get_bd_cells microblaze_0_axi_periph]
 
 #########################################################
 # QSFP ports
@@ -162,7 +184,7 @@ set smc_mi 0
 #    axis_data_fifo CDC between the MAC client clock and sys_clk, and (40G
 #    only) axis_dwidth_converter 512<->256
 #  - an AXI SmartConnect aggregating the MCDMA's SG/MM2S/S2MM masters into
-#    one S_AXI_HPx_FPD port
+#    one m_axi_hp that joins the DDR4 SmartConnect at the top level
 #
 
 proc create_qsfp_port {label} {
@@ -320,8 +342,10 @@ proc create_qsfp_port {label} {
   connect_bd_net [get_bd_pins $mac_rx_rst] [get_bd_pins logic_rx_rstn/Op1]
 
   #########################################################
-  # AXI MCDMA datapath (512-bit, sys_clk domain - mirrors the vck190 design)
+  # AXI MCDMA datapath (512-bit, sys_clk domain)
   #########################################################
+  # c_addr_width 32: MicroBlaze is a 32-bit system (KCU116 DDR4 = 1GB at
+  # 0x80000000, fully addressable in 32 bits).
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_mcdma axi_mcdma
   set_property -dict [list \
     CONFIG.c_num_mm2s_channels {1} \
@@ -331,7 +355,7 @@ proc create_qsfp_port {label} {
     CONFIG.c_include_mm2s_dre {1} \
     CONFIG.c_include_s2mm_dre {1} \
     CONFIG.c_sg_length_width {14} \
-    CONFIG.c_addr_width {40} \
+    CONFIG.c_addr_width {32} \
     CONFIG.c_m_axi_mm2s_data_width {512} \
     CONFIG.c_m_axi_s2mm_data_width {512} \
     CONFIG.c_m_axis_mm2s_tdata_width {512} \
@@ -342,7 +366,7 @@ proc create_qsfp_port {label} {
   connect_bd_net [get_bd_pins axi_mcdma/mm2s_ch1_introut] [get_bd_pins dma_mm2s_introut]
   connect_bd_net [get_bd_pins axi_mcdma/s2mm_ch1_introut] [get_bd_pins dma_s2mm_introut]
 
-  # MCDMA memory-mapped masters -> one HP port via SmartConnect
+  # MCDMA memory-mapped masters -> one m_axi_hp via SmartConnect
   create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect axi_smc_hp
   set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1}] [get_bd_cells axi_smc_hp]
   connect_bd_net [get_bd_pins sys_clk] [get_bd_pins axi_smc_hp/aclk]
@@ -438,11 +462,10 @@ proc create_qsfp_port {label} {
   current_bd_instance \
 }
 
-# HP port allocation: port 0 -> S_AXI_HP0_FPD, port 1 -> S_AXI_HP1_FPD
-set hp_ports   {S_AXI_HP0_FPD S_AXI_HP1_FPD}
-set hp_configs {CONFIG.PSU__USE__S_AXI_GP2 CONFIG.PSU__USE__S_AXI_GP3}
-set hp_clks    {saxihp0_fpd_aclk saxihp1_fpd_aclk}
-set hp_index 0
+# The MicroBlaze cached-DDR automation created SmartConnect "axi_smc"
+# (S00=DC, S01=IC -> ddr4_0/C0_DDR4_S_AXI). Each QSFP port's MCDMA
+# aggregate (m_axi_hp) joins it as an extra slave interface.
+set ddr_smc_si 2
 
 # Create each QSFP port
 foreach label $ports {
@@ -450,9 +473,9 @@ foreach label $ports {
 
   # Connect clocks/resets
   connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins qsfp_port$label/sys_clk]
-  connect_bd_net [get_bd_pins rst_ps_100m/peripheral_aresetn] [get_bd_pins qsfp_port$label/periph_rstn]
-  connect_bd_net [get_bd_pins rst_ps_100m/peripheral_reset] [get_bd_pins qsfp_port$label/periph_rst]
-  connect_bd_net [get_bd_pins rst_ps_100m/interconnect_aresetn] [get_bd_pins qsfp_port$label/intercon_rstn]
+  connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins qsfp_port$label/periph_rstn]
+  connect_bd_net [get_bd_pins $periph_rst] [get_bd_pins qsfp_port$label/periph_rst]
+  connect_bd_net [get_bd_pins $intercon_rstn] [get_bd_pins qsfp_port$label/intercon_rstn]
 
   # GT reference clock (GBTCLK$label from the FMC Si5328)
   create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 gt_ref_clk_$label
@@ -463,18 +486,14 @@ foreach label $ports {
   create_bd_intf_port -mode Master -vlnv xilinx.com:interface:gt_rtl:1.0 qsfp${label}_gt
   connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/qsfp_gt] [get_bd_intf_ports qsfp${label}_gt]
 
-  # MCDMA -> PS HP port
-  set hp_port [lindex $hp_ports $hp_index]
-  set hp_config [lindex $hp_configs $hp_index]
-  set hp_clk [lindex $hp_clks $hp_index]
-  set_property $hp_config {1} [get_bd_cells zynq_ultra_ps_e_0]
-  set hp_index [expr {$hp_index+1}]
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/m_axi_hp] [get_bd_intf_pins zynq_ultra_ps_e_0/$hp_port]
-  connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins zynq_ultra_ps_e_0/$hp_clk]
+  # MCDMA aggregate -> DDR4 SmartConnect (grow one SI per port)
+  set_property CONFIG.NUM_SI [expr {$ddr_smc_si + 1}] [get_bd_cells axi_smc]
+  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/m_axi_hp] [get_bd_intf_pins axi_smc/S[format "%02d" $ddr_smc_si]_AXI]
+  incr ddr_smc_si
 
   # AXI-Lite control interface (port control aggregate: MAC + mcdma)
-  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/S_AXI_LITE] [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI]
-  incr smc_mi
+  connect_bd_intf_net [get_bd_intf_pins qsfp_port$label/S_AXI_LITE] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+  incr periph_mi
 
   # External LED ports
   create_bd_port -dir O grn_led_qsfp$label
@@ -505,9 +524,9 @@ foreach label $ports {
     CONFIG.C_DOUT_DEFAULT {0x00000002} \
   ] [get_bd_cells axi_gpio_qsfp$label]
   connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_gpio_qsfp$label/s_axi_aclk]
-  connect_bd_net [get_bd_pins rst_ps_100m/peripheral_aresetn] [get_bd_pins axi_gpio_qsfp$label/s_axi_aresetn]
-  connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_gpio_qsfp$label/S_AXI]
-  incr smc_mi
+  connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_gpio_qsfp$label/s_axi_aresetn]
+  connect_bd_intf_net [get_bd_intf_pins axi_gpio_qsfp$label/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+  incr periph_mi
 
   # GPIO channel 1 outputs -> modsell/resetl/lpmode
   create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilslice:1.0 slice_modsell$label
@@ -540,17 +559,17 @@ foreach label $ports {
   # QSFP module management I2C (per port)
   #########################################################
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic axi_iic_qsfp$label
-  connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_iic_qsfp$label/S_AXI]
-  incr smc_mi
   connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_iic_qsfp$label/s_axi_aclk]
-  connect_bd_net [get_bd_pins rst_ps_100m/peripheral_aresetn] [get_bd_pins axi_iic_qsfp$label/s_axi_aresetn]
+  connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_iic_qsfp$label/s_axi_aresetn]
+  connect_bd_intf_net [get_bd_intf_pins axi_iic_qsfp$label/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+  incr periph_mi
   lappend intr_list "axi_iic_qsfp$label/iic2intc_irpt"
   create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 qsfp${label}_i2c
   connect_bd_intf_net [get_bd_intf_ports qsfp${label}_i2c] [get_bd_intf_pins axi_iic_qsfp$label/IIC]
 }
 
 #########################################################
-# Unused QSFP ports (e.g. port 1 on ZCU208/ZCU216)
+# Unused QSFP ports (port 1 is not connected on the KCU116 FMC)
 #########################################################
 # The module in an unpopulated port is held in reset and put in low-power
 # mode; its LEDs are off. No I2C/GPIO is instantiated for it.
@@ -573,29 +592,97 @@ foreach label {0 1} {
 # clk_i2c : Si5328 jitter-attenuating clock generator (one per board, shared
 # by both QSFP ports - it sources both GBTCLK0 and GBTCLK1 reference clocks).
 create_bd_cell -type ip -vlnv xilinx.com:ip:axi_iic axi_iic_clk
-connect_bd_intf_net [get_bd_intf_pins axi_smc/M[format "%02d" $smc_mi]_AXI] [get_bd_intf_pins axi_iic_clk/S_AXI]
-incr smc_mi
 connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_iic_clk/s_axi_aclk]
-connect_bd_net [get_bd_pins rst_ps_100m/peripheral_aresetn] [get_bd_pins axi_iic_clk/s_axi_aresetn]
+connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_iic_clk/s_axi_aresetn]
+connect_bd_intf_net [get_bd_intf_pins axi_iic_clk/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+incr periph_mi
 lappend intr_list "axi_iic_clk/iic2intc_irpt"
 create_bd_intf_port -mode Master -vlnv xilinx.com:interface:iic_rtl:1.0 clk_i2c
 connect_bd_intf_net [get_bd_intf_ports clk_i2c] [get_bd_intf_pins axi_iic_clk/IIC]
 
 #########################################################
-# PL-to-PS interrupts (pl_ps_irq0, max 8)
+# UART console (USB UART via the rs232_uart board interface)
 #########################################################
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_uart16550 axi_uart16550_0
+connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_uart16550_0/s_axi_aclk]
+connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_uart16550_0/s_axi_aresetn]
+connect_bd_intf_net [get_bd_intf_pins axi_uart16550_0/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+incr periph_mi
+apply_bd_automation -rule xilinx.com:bd_rule:board -config { Board_Interface {rs232_uart ( UART ) } Manual_Source {Auto}}  [get_bd_intf_pins axi_uart16550_0/UART]
+lappend intr_list "axi_uart16550_0/ip2intc_irpt"
+
+#########################################################
+# Timer (Linux clockevent source for MicroBlaze)
+#########################################################
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_timer axi_timer_0
+connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_timer_0/s_axi_aclk]
+connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_timer_0/s_axi_aresetn]
+connect_bd_intf_net [get_bd_intf_pins axi_timer_0/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+incr periph_mi
+lappend intr_list "axi_timer_0/interrupt"
+
+#########################################################
+# QSPI flash (boot / MTD)
+#########################################################
+# The KCU116 config QSPI (primary flash) is reached through the STARTUPE3
+# primitive inside the IP (C_USE_STARTUP_INT) - no package pins needed.
+# fs-boot/u-boot read the boot images (packaged as boot.mcs) from here.
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_quad_spi axi_quad_spi_0
+set_property -dict [list \
+  CONFIG.C_SPI_MEMORY {1} \
+  CONFIG.C_SPI_MODE {2} \
+  CONFIG.C_USE_STARTUP {1} \
+  CONFIG.C_USE_STARTUP_INT {1} \
+  CONFIG.C_NUM_SS_BITS {1} \
+  CONFIG.C_SCK_RATIO {2} \
+  CONFIG.C_FIFO_DEPTH {256} \
+] [get_bd_cells axi_quad_spi_0]
+connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins axi_quad_spi_0/s_axi_aclk]
+connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins axi_quad_spi_0/s_axi_aresetn]
+connect_bd_net [get_bd_pins ddr4_0/addn_ui_clkout2] [get_bd_pins axi_quad_spi_0/ext_spi_clk]
+connect_bd_intf_net [get_bd_intf_pins axi_quad_spi_0/AXI_LITE] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+incr periph_mi
+lappend intr_list "axi_quad_spi_0/ip2intc_irpt"
+
+#########################################################
+# Reset GPIO (software system reset, e.g. Linux reboot)
+#########################################################
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio reset_gpio
+set_property -dict [list CONFIG.C_GPIO_WIDTH {1} CONFIG.C_ALL_OUTPUTS {1}] [get_bd_cells reset_gpio]
+set_property -dict [list CONFIG.C_AUX_RST_WIDTH {1} CONFIG.C_AUX_RESET_HIGH {1}] [get_bd_cells rst_ddr4_0_100M]
+connect_bd_net [get_bd_pins reset_gpio/gpio_io_o] [get_bd_pins rst_ddr4_0_100M/aux_reset_in]
+connect_bd_net [get_bd_pins $sys_clk] [get_bd_pins reset_gpio/s_axi_aclk]
+connect_bd_net [get_bd_pins $periph_rstn] [get_bd_pins reset_gpio/s_axi_aresetn]
+connect_bd_intf_net [get_bd_intf_pins reset_gpio/S_AXI] [get_bd_intf_pins microblaze_0_axi_periph/M[format "%02d" $periph_mi]_AXI]
+incr periph_mi
+
+#########################################################
+# Interrupts -> MicroBlaze axi_intc concat
+#########################################################
+# Order matters: the QSFP port interrupts come first so the port-config
+# device-tree overlay can reference fixed intc inputs:
+#   0: port0 mm2s  1: port0 s2mm  2: qsfp0 iic  3: clk iic
+#   4: uart16550   5: timer       6: qspi
 set n_interrupts [llength $intr_list]
-create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 intr_concat
-set_property CONFIG.NUM_PORTS $n_interrupts [get_bd_cells intr_concat]
+set_property CONFIG.NUM_PORTS $n_interrupts [get_bd_cells microblaze_0_xlconcat]
 set intr_index 0
 foreach intr $intr_list {
-  connect_bd_net [get_bd_pins $intr] [get_bd_pins intr_concat/In$intr_index]
+  connect_bd_net [get_bd_pins $intr] [get_bd_pins microblaze_0_xlconcat/In$intr_index]
   set intr_index [expr {$intr_index+1}]
 }
-connect_bd_net [get_bd_pins intr_concat/dout] [get_bd_pins zynq_ultra_ps_e_0/pl_ps_irq0]
 
-# Assign addresses
+# MCDMA -> DDR4 address assignment (32-bit masters into the DDR block)
+foreach label $ports {
+  foreach space {Data_SG Data_MM2S Data_S2MM} {
+    assign_bd_address -target_address_space /qsfp_port$label/axi_mcdma/$space [get_bd_addr_segs ddr4_0/C0_DDR4_MEMORY_MAP/C0_DDR4_ADDRESS_BLOCK] -force
+  }
+}
+
+# Assign any remaining addresses
 assign_bd_address
+
+# Restore current instance
+current_bd_instance $oldCurInst
 
 # Layout and validate
 regenerate_bd_layout

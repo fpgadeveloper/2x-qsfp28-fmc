@@ -630,6 +630,14 @@ def stage_petalinux(ctx: Context):
     # Delegate to the tested Makefile flow -- make always exists on Linux.
     cmd = ["make", "-C", str(ctx.repo.root / "PetaLinux"),
            "petalinux", f"TARGET={ctx.target}", f"JOBS={ctx.jobs}"]
+    # MicroBlaze targets package boot.mcs via `petalinux-package boot --format
+    # MCS`, which invokes vivado (write_cfgmem) -- put its bin dir on PATH
+    # (appended, so the PetaLinux environment keeps precedence).
+    extra_env = None
+    vivado = find_tool("Vivado", ctx.viv_ver)
+    if vivado:
+        extra_env = {"PATH": os.pathsep.join(
+            [os.environ.get("PATH", ""), str(vivado / "bin")])}
     if not os.environ.get("PETALINUX"):
         settings = find_petalinux_settings(ctx.viv_ver)
         if not settings:
@@ -637,9 +645,9 @@ def stage_petalinux(ctx: Context):
                  f"PetaLinux Tools or source settings.sh before running.")
         rc = run_tool(["bash", "-c",
                        f'source "{settings}" >/dev/null && ' + shlex.join(cmd)],
-                      cwd=ctx.repo.root)
+                      cwd=ctx.repo.root, extra_env=extra_env)
     else:
-        rc = run_tool(cmd, cwd=ctx.repo.root)
+        rc = run_tool(cmd, cwd=ctx.repo.root, extra_env=extra_env)
     # The PetaLinux Makefile can exit 0 without producing images (e.g. bad
     # environment) -- verify like every other stage.
     boot_ok = (ctx.petl_img / "BOOT.BIN").is_file() or (ctx.petl_img / "boot.mcs").is_file()

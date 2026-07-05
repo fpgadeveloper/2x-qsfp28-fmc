@@ -14,8 +14,10 @@ JOBS ?= 8
 # valid targets (template name, flash size, flash interface, port config)
 # UPDATER START
 # 40G designs
+kcu116_ss_target := microblaze 32 SPIx4 ports-mb40g-0
 # 100G designs
 vck190_fmcp1_target := versal 0 0 ports-versal-01
+kcu116_target := microblaze 32 SPIx4 ports-mb100g-0
 # UPDATER END
 
 TARGET_LIST := $(sort $(patsubst %_target,%,$(filter %_target,$(.VARIABLES))))
@@ -73,7 +75,7 @@ ifeq ($(call get_template_name,$(TARGET)), microblaze)
 	SSTATE_ARCH = microblaze
 	BUILD_PRODUCTS = $(PETL_FSBOOT_ELF) $(PETL_UBOOT_ELF) $(PETL_DTB)
 	PKG_PRODUCTS = $(PETL_BOOT_MCS)
-	PKG_CMD = petalinux-package boot --force --fpga $(VIV_BIT) --u-boot --kernel --flash-size $(call get_flash_size,$(TARGET)) --flash-intf $(call get_flash_intf,$(TARGET)) --format MCS
+	PKG_CMD = petalinux-package boot --force --fpga $(VIV_BIT) --u-boot --kernel --flash-size $(call get_flash_size,$(TARGET)) --flash-intf $(call get_flash_intf,$(TARGET)) --format MCS -o $(PETL_BOOT_MCS)
 else ifeq ($(call get_template_name,$(TARGET)), zynq)
 	SSTATE_ARCH = arm
 	BUILD_PRODUCTS = $(PETL_ZYNQ_FSBL_ELF) $(PETL_UBOOT_ELF) $(PETL_DTB)

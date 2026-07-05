@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2025-2026, Opsero Electronic Design Inc.  All rights reserved.
+
+/*
+ * 2x QSFP28 FMC port config: ports-mb100g-0 (KCU116, MicroBlaze).
+ * Single QSFP28 port (port 0) at 100GbE (CAUI-4) via the CMAC hard block -
+ * the KCU116 FMC HPC wires only DP0-3 (one GTY quad). Port 1 is tied off
+ * in hardware.
+ *
+ * BD interrupt order on the MicroBlaze axi_intc (xlnx,xps-intc, 2 cells:
+ * <input trigger>, trigger 2 = level-high):
+ *   0: port0 mm2s  1: port0 s2mm  2: qsfp0 iic  3: clk iic
+ *   4: uart16550   5: timer
+ */
+
+/ {
+	ref_si5328: ref_si5328 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <114285000>;
+	};
+};
+
+/* Si5328 jitter-attenuating clock generator on the shared clk_i2c bus.
+ * Programming it brings up GBTCLK0 (322.265625 MHz, QSFP port 0 GT refclk). */
+&axi_iic_clk {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	fmc_si5328: clock-generator@68 {
+		status = "okay";
+		compatible = "silabs,si5328";
+		reg = <0x68>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#clock-cells = <1>;
+		clocks = <&ref_si5328>;
+		clock-names = "xtal";
+
+		fmc_si5328_clk: clk0@0 {
+			reg = <0>;
+			clock-frequency = <322265625>; /* 322.265625 MHz - 100G CAUI-4 GT refclk (LCPLL integer-N) */
+		};
+	};
+};
+
+&qsfp_port0_cmac {
+	compatible = "xlnx,cmac-usplus-3.1";
+	axistream-connected = <&qsfp_port0_axi_mcdma>;
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&microblaze_0_axi_intc>;
+	interrupts = <0 2>, <1 2>;
+	local-mac-address = [00 0a 35 00 00 00];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x20>;
+	max-speed = <100000>;
+};
+/* Keep the standalone xilinx_dma dmaengine driver off the MCDMA (axienet
+ * ioremaps and drives it itself - see bsp.cfg). */
+&qsfp_port0_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};

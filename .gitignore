@@ -19,10 +19,20 @@ Vivado/zcu208/
 PetaLinux/zcu208/
 Vivado/zcu216/
 PetaLinux/zcu216/
+Vivado/kcu116/
+PetaLinux/kcu116/
 Vivado/zcu102_hpc0/
 PetaLinux/zcu102_hpc0/
 Vivado/zcu106_hpc0/
 PetaLinux/zcu106_hpc0/
+Vivado/zcu111_ss/
+PetaLinux/zcu111_ss/
+Vivado/zcu208_ss/
+PetaLinux/zcu208_ss/
+Vivado/zcu216_ss/
+PetaLinux/zcu216_ss/
+Vivado/kcu116_ss/
+PetaLinux/kcu116_ss/
 # UPDATER END
 dfx_runtime.txt
 .repo.yaml
