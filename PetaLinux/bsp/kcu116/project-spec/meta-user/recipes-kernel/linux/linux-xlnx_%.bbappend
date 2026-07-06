@@ -27,3 +27,8 @@ SRC_URI:append = " file://0003-net-axienet-hse-exempt-pcs-handle-requirement.pat
 # different TICK/STAT offsets than the CMAC and SLVERR-on-undefined-offset
 # enabled at reset - the CMAC offsets caused an SError panic at first ifup.
 SRC_URI:append = " file://0004-net-axienet-hse-fix-l_ethernet-register-map.patch"
+
+# Fix from zcu106_hpc0 bring-up: the RX status register is latched-low +
+# clear-on-read, so the link poll must read it twice (flush, then sample) or
+# its own GT reset pulses keep the link down forever.
+SRC_URI:append = " file://0005-net-axienet-hse-fix-latched-low-link-poll.patch"

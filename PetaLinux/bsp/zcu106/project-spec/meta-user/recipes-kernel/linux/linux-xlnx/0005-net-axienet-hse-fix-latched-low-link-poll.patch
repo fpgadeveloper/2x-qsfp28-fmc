@@ -1,0 +1,45 @@
+From: Opsero Electronic Design Inc. <support@opsero.com>
+Subject: [PATCH] net: axienet: HSE link poll must double-read latched status
+
+The HSE RX status register (l_ethernet STAT_RX_STATUS_REG1 / CMAC
+STAT_RX_STATUS) is latched-low and cleared on read. The link poll read
+it once per cycle, so it always saw the history of the interval - which,
+while the link was down, always included the poll's own GT reset pulse
+from the previous cycle. The result is a self-defeating loop: the GT
+aligns within the poll period, the poll reads the latched pre-alignment
+low, declares the link down and resets the GT again. The link never
+comes up on an idle system; on the bench it only came up when external
+register reads (devmem debugging) flushed the latch mid-interval.
+
+Read the status register twice: the first read flushes the latch, the
+second returns the current state. Verified on zcu106_hpc0 hardware
+(2x QSFP28 FMC, 40GBASE-R4, passive loopback plugs): with the flush in
+place both ports align and carrier comes up on the next poll cycle.
+---
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+@@ -1091,10 +1091,21 @@
+ 						hse_link_work.work);
+ 	struct net_device *ndev = lp->ndev;
+ 	bool link_up;
+-	u32 val;
++	u32 off, val;
+ 
+-	val = axienet_ior(lp, lp->hse_leth ? HSE_LETH_STAT_RX_STATUS_OFFSET
+-					   : HSE_CMAC_STAT_RX_STATUS_OFFSET);
++	off = lp->hse_leth ? HSE_LETH_STAT_RX_STATUS_OFFSET
++			   : HSE_CMAC_STAT_RX_STATUS_OFFSET;
++
++	/* The RX status bits are latched-low, cleared on read: one read
++	 * returns the history since the previous read, which - while the
++	 * link is down - always includes our own GT reset from the last
++	 * poll cycle, so a single read shows the link down forever even
++	 * once alignment has completed (reset -> align -> read the
++	 * pre-alignment low -> reset again). Read twice: the first read
++	 * flushes the latch, the second samples the current state.
++	 */
++	axienet_ior(lp, off);
++	val = axienet_ior(lp, off);
+ 	link_up = (val & HSE_RX_STATUS_MASK) && (val & HSE_RX_ALIGNED_MASK);
+ 
+ 	if (link_up && !netif_carrier_ok(ndev)) {
