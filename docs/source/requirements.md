@@ -8,7 +8,8 @@ In order to test this design on hardware, you will need the following:
 * [AMD Versal Integrated MRMAC License](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html)
   (a free, no-cost license is required to generate a bitstream that uses the integrated MRMAC)
 * One of the supported carrier boards listed below
-* Two 100G QSFP28 modules, or 100G QSFP28 passive loopback modules for the bundled self-test
+* Two 100G QSFP28 modules, or - for the bundled `qsfp-loopback-test` self-test - a QSFP28
+  passive DAC cable between the two ports (single-port targets: a passive loopback module)
 
 ## List of supported boards
 

@@ -1,0 +1,320 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# qsfp-loopback-test : QSFP28 port-to-port loopback self-test
+#
+# Opsero 2x QSFP28 FMC reference designs (all targets, 40G and 100G).
+#
+# Connect a passive DAC cable between QSFP port 0 and QSFP port 1, boot
+# Linux, then run this script as root. It finds the two QSFP interfaces
+# (the ones bound to the xilinx_axienet driver), waits for link, and runs:
+#
+#   1. L2 frame blast (kernel pktgen), port0 -> port1 and port1 -> port0:
+#      every frame sent on one port must arrive on the other, full-size,
+#      with zero RX errors.
+#   2. IPv4 ping between the ports. Each port is moved into its own network
+#      namespace first, which forces the traffic over the cable (otherwise
+#      the kernel short-circuits local addresses internally).
+#   3. iperf3 TCP throughput, both directions (skipped if iperf3 is not
+#      installed). Throughput is reported, not judged: the CPU, not the
+#      link, is the bottleneck in these designs.
+#
+# Single-port targets (kcu116, zcu208, zcu216): there is only one QSFP port
+# wired, so a port-to-port test is impossible. Fit a passive QSFP loopback
+# plug in the port and run `qsfp-loopback-test --single` instead - it blasts
+# pktgen frames at the port's own MAC so they loop straight back in.
+#
+# Usage:  qsfp-loopback-test [options] [iface0 iface1]
+#   -c COUNT   pktgen frames per direction   (default: 500000)
+#   -s SIZE    pktgen frame size in bytes    (default: 1500)
+#   -t SECS    iperf3 duration per direction (default: 5)
+#   -w SECS    link-up wait timeout          (default: 30)
+#   --single [iface]   single-port self-loopback mode (loopback plug fitted)
+#   --no-iperf         skip the iperf3 phase
+#   iface0 iface1      override auto-detection of the QSFP interfaces
+# ---------------------------------------------------------------------------
+
+COUNT=500000
+PKTSIZE=1500
+IPERF_SECS=5
+LINK_WAIT=30
+SINGLE=0
+NO_IPERF=0
+IF0=""
+IF1=""
+
+NS0=qsfplb0
+NS1=qsfplb1
+ADDR0=192.168.77.1
+ADDR1=192.168.77.2
+PG=/proc/net/pktgen
+
+usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-c) COUNT="$2"; shift 2 ;;
+		-s) PKTSIZE="$2"; shift 2 ;;
+		-t) IPERF_SECS="$2"; shift 2 ;;
+		-w) LINK_WAIT="$2"; shift 2 ;;
+		--single) SINGLE=1; shift ;;
+		--no-iperf) NO_IPERF=1; shift ;;
+		-h|--help) usage ;;
+		-*) echo "unknown option: $1"; usage ;;
+		*)  if [ -z "$IF0" ]; then IF0="$1"; elif [ -z "$IF1" ]; then IF1="$1";
+		    else echo "too many interface arguments"; usage; fi; shift ;;
+	esac
+done
+
+[ "$(id -u)" = "0" ] || { echo "ERROR: must be run as root"; exit 1; }
+
+# --------------------------------------------------------------------------
+# QSFP interface discovery: the FMC's MAC ports (MRMAC / CMAC / l_ethernet)
+# all bind to the xilinx_axienet driver; the PS/board Ethernet does not.
+# --------------------------------------------------------------------------
+detect_ifaces() {
+	found=""
+	for d in /sys/class/net/*; do
+		i=$(basename "$d")
+		drv=$(basename "$(readlink "$d/device/driver" 2>/dev/null)" 2>/dev/null)
+		[ "$drv" = "xilinx_axienet" ] && found="$found $i"
+	done
+	echo "$found"
+}
+
+if [ -z "$IF0" ]; then
+	set -- $(detect_ifaces)
+	if [ "$SINGLE" = "1" ]; then
+		[ $# -ge 1 ] || { echo "ERROR: no xilinx_axienet interfaces found"; exit 1; }
+		IF0="$1"; IF1="$1"
+	else
+		case $# in
+			2) IF0="$1"; IF1="$2" ;;
+			1) echo "Only one QSFP interface found ($1): this target wires a single"
+			   echo "QSFP port, so the port-to-port test cannot run. Fit a passive"
+			   echo "QSFP loopback plug and re-run with:  qsfp-loopback-test --single"
+			   exit 1 ;;
+			0) echo "ERROR: no xilinx_axienet interfaces found - is this the right image?"
+			   exit 1 ;;
+			*) echo "ERROR: expected 2 QSFP interfaces, found $#: $*"
+			   echo "Pass the two ports explicitly: qsfp-loopback-test IFACE0 IFACE1"
+			   exit 1 ;;
+		esac
+	fi
+elif [ -z "$IF1" ]; then
+	[ "$SINGLE" = "1" ] || { echo "ERROR: need two interfaces (or --single)"; usage; }
+	IF1="$IF0"
+fi
+[ "$SINGLE" = "1" ] && IF1="$IF0"
+
+for i in $IF0 $IF1; do
+	[ -e "/sys/class/net/$i" ] || { echo "ERROR: interface '$i' not found"; exit 1; }
+done
+
+MAC0=$(cat /sys/class/net/$IF0/address)
+MAC1=$(cat /sys/class/net/$IF1/address)
+
+# Result bookkeeping. Verdict variables are only ever set in the main shell
+# (never inside $(...)), so FAILED reliably reaches the exit code.
+R_LINK=-; R_L2_01=-; R_L2_10=-; R_PING=-; R_IPERF=-
+FAILED=0
+
+# Cleanup (runs on exit): stop pktgen, kill iperf3, delete the namespaces
+# (interfaces automatically return to the root namespace).
+cleanup() {
+	[ -e "$PG/kpktgend_0" ] && echo "rem_device_all" > "$PG/kpktgend_0" 2>/dev/null
+	[ -n "$IPERF_PID" ] && kill "$IPERF_PID" 2>/dev/null
+	ip netns del "$NS0" 2>/dev/null
+	ip netns del "$NS1" 2>/dev/null
+}
+IPERF_PID=""
+trap cleanup EXIT INT TERM
+
+echo "==========================================================================="
+echo " QSFP28 loopback test"
+if [ "$SINGLE" = "1" ]; then
+	echo "   mode   : single port, self-loopback (loopback plug in $IF0)"
+	echo "   port   : $IF0  ($MAC0)"
+else
+	echo "   mode   : port-to-port (DAC cable between the two QSFP ports)"
+	echo "   port A : $IF0  ($MAC0)"
+	echo "   port B : $IF1  ($MAC1)"
+fi
+echo "   pktgen : $COUNT frames x $PKTSIZE bytes per direction"
+echo "==========================================================================="
+
+# --------------------------------------------------------------------------
+# Phase 1: link. Bring the ports up and wait for carrier. The GT reference
+# clock only starts once Linux has programmed the FMC's Si5328, and the MAC
+# retries alignment about once a second, so allow a generous timeout.
+# --------------------------------------------------------------------------
+printf "\n[1/4] Link check ... "
+for i in $IF0 $IF1; do
+	ip link set "$i" up 2>/dev/null
+	# IPv6 autoconf multicast would pollute the L2 frame counters.
+	[ -e "/proc/sys/net/ipv6/conf/$i/disable_ipv6" ] && \
+		echo 1 > "/proc/sys/net/ipv6/conf/$i/disable_ipv6"
+done
+t=0
+while [ $t -lt "$LINK_WAIT" ]; do
+	c0=$(cat /sys/class/net/$IF0/carrier 2>/dev/null || echo 0)
+	c1=$(cat /sys/class/net/$IF1/carrier 2>/dev/null || echo 0)
+	[ "$c0" = "1" ] && [ "$c1" = "1" ] && break
+	sleep 1; t=$((t + 1))
+done
+if [ "$c0" = "1" ] && [ "$c1" = "1" ]; then
+	R_LINK="PASS"; echo "PASS (carrier on after ${t}s)"
+else
+	R_LINK="FAIL (no carrier after ${LINK_WAIT}s: $IF0=$c0 $IF1=$c1)"; FAILED=1
+	echo "$R_LINK"
+	echo "  Check that the cable/plug is seated and is a PASSIVE copper part"
+	echo "  (optical 100G modules are not rated for 40G lane speeds)."
+	R_L2_01="SKIP"; R_L2_10="SKIP"; R_PING="SKIP"; R_IPERF="SKIP"
+fi
+
+# --------------------------------------------------------------------------
+# Phase 2: L2 pktgen blast. Frames leave TXIF addressed to RXIF's MAC, cross
+# the cable, and must all be counted by RXIF - full-size and error-free.
+# Runs in the root namespace (no IP addresses needed at L2).
+# Sets L2V to PASS or "FAIL (reason)".
+# --------------------------------------------------------------------------
+l2_blast() {
+	TXIF="$1"; RXIF="$2"; DSTMAC="$3"
+
+	rx0=$(cat /sys/class/net/$RXIF/statistics/rx_packets)
+	rxb0=$(cat /sys/class/net/$RXIF/statistics/rx_bytes)
+	rxe0=$(cat /sys/class/net/$RXIF/statistics/rx_errors)
+
+	echo "rem_device_all"    > "$PG/kpktgend_0"
+	echo "add_device $TXIF"  > "$PG/kpktgend_0"
+	echo "count $COUNT"      > "$PG/$TXIF"
+	echo "pkt_size $PKTSIZE" > "$PG/$TXIF"
+	echo "dst_mac $DSTMAC"   > "$PG/$TXIF"
+	# 'start' blocks until all COUNT frames have been sent.
+	echo "start"             > "$PG/pgctrl"
+
+	# Give in-flight frames a moment to drain before reading counters.
+	sleep 1
+	rx1=$(cat /sys/class/net/$RXIF/statistics/rx_packets)
+	rxb1=$(cat /sys/class/net/$RXIF/statistics/rx_bytes)
+	rxe1=$(cat /sys/class/net/$RXIF/statistics/rx_errors)
+	rate=$(grep -o '[0-9]*pps' "$PG/$TXIF" 2>/dev/null | head -1)
+	echo "rem_device_all"    > "$PG/kpktgend_0"
+
+	rxp=$((rx1 - rx0)); rxby=$((rxb1 - rxb0)); rxer=$((rxe1 - rxe0))
+	avg=0; [ "$rxp" -gt 0 ] && avg=$((rxby / rxp))
+	echo "      $TXIF -> $RXIF: rx $rxp/$COUNT frames, avg ${avg}B, $rxer rx_errors${rate:+, $rate}"
+
+	# Verdict: all frames arrive (5% slack for stray traffic), full-size
+	# (a tiny average means the datapath is fragmenting frames), no errors.
+	if   [ "$rxer" -ne 0 ]; then                        L2V="FAIL (RX errors)"
+	elif [ "$rxp" -lt $((COUNT - COUNT / 20)) ]; then   L2V="FAIL (frames lost)"
+	elif [ "$rxp" -gt $((COUNT + COUNT / 20)) ]; then   L2V="FAIL (more RX than TX frames)"
+	elif [ "$avg" -lt $((PKTSIZE - PKTSIZE / 10)) ]; then L2V="FAIL (undersized RX frames - datapath fragmentation)"
+	else                                                L2V="PASS"
+	fi
+}
+
+if [ "$R_LINK" = "PASS" ]; then
+	echo "[2/4] L2 frame blast (pktgen)"
+	modprobe pktgen 2>/dev/null
+	if [ ! -e "$PG/pgctrl" ]; then
+		R_L2_01="FAIL (pktgen kernel module not available)"; FAILED=1
+		R_L2_10="SKIP"
+		echo "      $R_L2_01"
+	else
+		l2_blast "$IF0" "$IF1" "$MAC1"
+		R_L2_01="$L2V"; [ "$L2V" = "PASS" ] || FAILED=1
+		if [ "$SINGLE" = "1" ]; then
+			R_L2_10="SKIP"
+		else
+			l2_blast "$IF1" "$IF0" "$MAC0"
+			R_L2_10="$L2V"; [ "$L2V" = "PASS" ] || FAILED=1
+		fi
+	fi
+fi
+
+# --------------------------------------------------------------------------
+# Phase 3 + 4: IP tests in isolated namespaces (dual-port mode only).
+# --------------------------------------------------------------------------
+if [ "$R_LINK" = "PASS" ] && [ "$SINGLE" = "0" ]; then
+	printf "[3/4] IPv4 ping across the cable ... "
+	if ! ip netns add "$NS0" 2>/dev/null || ! ip netns add "$NS1" 2>/dev/null; then
+		R_PING="FAIL (cannot create network namespaces - iproute2 'ip' required)"; FAILED=1
+		echo "$R_PING"
+		R_IPERF="SKIP"
+	else
+		ip link set "$IF0" netns "$NS0"
+		ip link set "$IF1" netns "$NS1"
+		ip netns exec "$NS0" ip addr add "$ADDR0/24" dev "$IF0"
+		ip netns exec "$NS1" ip addr add "$ADDR1/24" dev "$IF1"
+		ip netns exec "$NS0" ip link set "$IF0" up
+		ip netns exec "$NS1" ip link set "$IF1" up
+		# Moving namespaces cycles the interfaces; wait for carrier again.
+		t=0
+		while [ $t -lt "$LINK_WAIT" ]; do
+			c0=$(ip netns exec "$NS0" cat /sys/class/net/$IF0/carrier 2>/dev/null || echo 0)
+			c1=$(ip netns exec "$NS1" cat /sys/class/net/$IF1/carrier 2>/dev/null || echo 0)
+			[ "$c0" = "1" ] && [ "$c1" = "1" ] && break
+			sleep 1; t=$((t + 1))
+		done
+		if out=$(ip netns exec "$NS0" ping -c 5 -W 2 "$ADDR1" 2>&1); then
+			loss=$(echo "$out" | grep -o '[0-9]*% packet loss' | head -1)
+			R_PING="PASS"
+			echo "PASS (${loss:-0% packet loss})"
+		else
+			R_PING="FAIL (ping $ADDR0 -> $ADDR1 got no reply)"; FAILED=1
+			echo "$R_PING"
+			echo "$out" | tail -3
+		fi
+
+		echo "[4/4] iperf3 TCP throughput"
+		if [ "$NO_IPERF" = "1" ]; then
+			R_IPERF="SKIP"; echo "      skipped (--no-iperf)"
+		elif ! command -v iperf3 >/dev/null 2>&1; then
+			R_IPERF="SKIP"; echo "      skipped (iperf3 not installed)"
+		elif [ "$R_PING" != "PASS" ]; then
+			R_IPERF="SKIP"; echo "      skipped (ping failed)"
+		else
+			ip netns exec "$NS1" iperf3 -s >/dev/null 2>&1 &
+			IPERF_PID=$!
+			sleep 1
+			R_IPERF="PASS"
+			for dir in "A->B:" "B->A:-R"; do
+				label=${dir%%:*}; flag=${dir##*:}
+				bw=$(ip netns exec "$NS0" iperf3 -c "$ADDR1" -t "$IPERF_SECS" $flag 2>&1 \
+					| awk '/receiver/ {print $(NF-2), $(NF-1); exit}')
+				if [ -n "$bw" ]; then
+					echo "      $label : $bw"
+				else
+					R_IPERF="FAIL (iperf3 $label produced no result)"; FAILED=1
+					echo "      $label : no result"
+				fi
+			done
+			kill "$IPERF_PID" 2>/dev/null; IPERF_PID=""
+		fi
+	fi
+elif [ "$SINGLE" = "1" ]; then
+	R_PING="SKIP"; R_IPERF="SKIP"
+fi
+
+# --------------------------------------------------------------------------
+# Summary
+# --------------------------------------------------------------------------
+echo ""
+echo "============================ summary ====================================="
+echo "  link             : $R_LINK"
+if [ "$SINGLE" = "1" ]; then
+	echo "  L2 self-loopback : $R_L2_01"
+else
+	echo "  L2 $IF0 -> $IF1  : $R_L2_01"
+	echo "  L2 $IF1 -> $IF0  : $R_L2_10"
+	echo "  IPv4 ping        : $R_PING"
+	echo "  iperf3           : $R_IPERF   (throughput is CPU-bound, informational)"
+fi
+if [ "$FAILED" = "0" ]; then
+	echo "  VERDICT: PASS"
+else
+	echo "  VERDICT: FAIL"
+fi
+echo "==========================================================================="
+exit $FAILED

@@ -12,5 +12,5 @@ IMAGE_INSTALL:append = " \
     can-utils \
     nfs-utils \
     pciutils \
-    mrmac-loopback-test \
+    qsfp-loopback-test \
 "

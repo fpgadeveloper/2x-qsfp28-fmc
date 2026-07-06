@@ -129,7 +129,7 @@ corresponding applications available:
 
 | Environment      | Available Applications  |
 |------------------|-------------------------|
-| PetaLinux        | Built-in Linux commands<br>Additional tools: ethtool, iperf3<br>Bundled self-test: `mrmac-loopback-test` |
+| PetaLinux / Yocto | Built-in Linux commands<br>Additional tools: ethtool, iperf3, iproute2<br>Bundled self-test: `qsfp-loopback-test` |
 
 [2x QSFP28 FMC]: https://docs.opsero.com/op120/datasheet/overview/
 [Quad SFP28 FMC]: https://docs.opsero.com/op081/datasheet/overview/

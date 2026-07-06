@@ -30,5 +30,8 @@
   partner comes up automatically over a cable and recovers on cable
   re-seat or partner power-on (`MRMAC link up` / `MRMAC link down`), with
   link state reflected in the netdev carrier.
-* Bundled `mrmac-loopback-test` rootfs self-test for validating each
-  port's datapath with a passive 100G loopback module.
+* Bundled `qsfp-loopback-test` rootfs self-test (all PetaLinux and Yocto
+  images): with a passive DAC cable between the two QSFP28 ports it
+  validates both datapaths end to end (pktgen L2 frame blast, then
+  namespaced ping and iperf3 across the cable); single-port targets run
+  it with `--single` and a passive loopback module.

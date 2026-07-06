@@ -145,6 +145,9 @@ missing from your device tree.
    192.168.2.10). Multiple ports managed under Linux on the same subnet will not work.
 
 3. **Use the bundled self-test to isolate link vs. host problems.**   
-   `mrmac-loopback-test eth0` (with a passive loopback module) validates the entire MRMAC → MCDMA
-   → DDR datapath independently of any link partner. If the self-test passes but traffic to a real
-   peer does not, the problem is in the link or the peer, not the FPGA design.
+   `qsfp-loopback-test` (with a passive DAC cable connecting QSFP port 0 to QSFP port 1)
+   validates the entire MAC → MCDMA → DDR datapath of both ports independently of any link
+   partner: L2 frame blast (pktgen), then namespaced ping and iperf3 across the cable. On
+   single-port targets run `qsfp-loopback-test --single` with a passive loopback module
+   fitted instead. If the self-test passes but traffic to a real peer does not, the problem
+   is in the link or the peer, not the FPGA design.

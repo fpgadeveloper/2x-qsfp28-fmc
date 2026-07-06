@@ -10,4 +10,5 @@ IMAGE_INSTALL:append = " \
     mtd-utils \
     nfs-utils \
     pciutils \
+    qsfp-loopback-test \
 "
