@@ -22,3 +22,8 @@ SRC_URI:append = " file://0002-net-axienet-add-hse-cmac-l-ethernet-support.patch
 # Fix from first hardware bring-up (zcu106_hpc0): the HSE mactype must be
 # exempt from the probe-time pcs-handle/phy-handle requirement, like MRMAC.
 SRC_URI:append = " file://0003-net-axienet-hse-exempt-pcs-handle-requirement.patch"
+
+# Fix from zcu106_hpc0 bring-up: the 40G/50G subsystem (l_ethernet) has
+# different TICK/STAT offsets than the CMAC and SLVERR-on-undefined-offset
+# enabled at reset - the CMAC offsets caused an SError panic at first ifup.
+SRC_URI:append = " file://0004-net-axienet-hse-fix-l_ethernet-register-map.patch"
