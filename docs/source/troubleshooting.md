@@ -147,7 +147,9 @@ missing from your device tree.
 3. **Use the bundled self-test to isolate link vs. host problems.**   
    `qsfp-loopback-test` (with a passive DAC cable connecting QSFP port 0 to QSFP port 1)
    validates the entire MAC → MCDMA → DDR datapath of both ports independently of any link
-   partner: L2 frame blast (pktgen), then namespaced ping and iperf3 across the cable. On
-   single-port targets run `qsfp-loopback-test --single` with a passive loopback module
-   fitted instead. If the self-test passes but traffic to a real peer does not, the problem
-   is in the link or the peer, not the FPGA design.
+   partner: L2 frame blast (pktgen), then namespaced ping and iperf3 across the cable. No
+   DAC at hand (or a single-port target)? Fit passive QSFP loopback modules and run
+   `qsfp-loopback-test --single` — it self-tests every port that has a plug. Use passive
+   copper parts on the 40G targets; 100G AOCs and SR4 optics are generally not rated for
+   the 10.3125 Gb/s lane rate. If the self-test passes but traffic to a real peer does
+   not, the problem is in the link or the peer, not the FPGA design.

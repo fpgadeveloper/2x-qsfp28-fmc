@@ -18,17 +18,21 @@
 #      installed). Throughput is reported, not judged: the CPU, not the
 #      link, is the bottleneck in these designs.
 #
-# Single-port targets (kcu116, zcu208, zcu216): there is only one QSFP port
-# wired, so a port-to-port test is impossible. Fit a passive QSFP loopback
-# plug in the port and run `qsfp-loopback-test --single` instead - it blasts
-# pktgen frames at the port's own MAC so they loop straight back in.
+# No DAC cable? With passive QSFP loopback plugs fitted, run
+# `qsfp-loopback-test --single`: every detected QSFP port is self-tested by
+# blasting pktgen frames at its own MAC so they loop straight back in. This
+# validates each port's full datapath; only the cross-port IP phases are
+# skipped. Single-port targets (kcu116, zcu208, zcu216) always use this
+# mode. Note: use PASSIVE parts for loopback on 40G targets - 100G AOCs and
+# SR4 optics are generally not rated for the 10.3125 Gb/s lane rate.
 #
 # Usage:  qsfp-loopback-test [options] [iface0 iface1]
 #   -c COUNT   pktgen frames per direction   (default: 500000)
 #   -s SIZE    pktgen frame size in bytes    (default: 1500)
 #   -t SECS    iperf3 duration per direction (default: 5)
 #   -w SECS    link-up wait timeout          (default: 30)
-#   --single [iface]   single-port self-loopback mode (loopback plug fitted)
+#   --single [iface]   self-loopback mode: test the given port, or every
+#                      detected QSFP port (loopback plugs fitted)
 #   --no-iperf         skip the iperf3 phase
 #   iface0 iface1      override auto-detection of the QSFP interfaces
 # ---------------------------------------------------------------------------
@@ -48,7 +52,7 @@ ADDR0=192.168.77.1
 ADDR1=192.168.77.2
 PG=/proc/net/pktgen
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -81,12 +85,21 @@ detect_ifaces() {
 	echo "$found"
 }
 
-if [ -z "$IF0" ]; then
-	set -- $(detect_ifaces)
-	if [ "$SINGLE" = "1" ]; then
-		[ $# -ge 1 ] || { echo "ERROR: no xilinx_axienet interfaces found"; exit 1; }
-		IF0="$1"; IF1="$1"
+# IFLIST: the interfaces under test (dual mode: exactly two; single mode:
+# one per fitted loopback plug).
+if [ "$SINGLE" = "1" ]; then
+	if [ -n "$IF1" ] && [ "$IF1" != "$IF0" ]; then
+		echo "ERROR: --single takes at most one interface"; usage
+	fi
+	if [ -n "$IF0" ]; then
+		IFLIST="$IF0"
 	else
+		IFLIST=$(detect_ifaces)
+		[ -n "${IFLIST# }" ] || { echo "ERROR: no xilinx_axienet interfaces found"; exit 1; }
+	fi
+else
+	if [ -z "$IF0" ]; then
+		set -- $(detect_ifaces)
 		case $# in
 			2) IF0="$1"; IF1="$2" ;;
 			1) echo "Only one QSFP interface found ($1): this target wires a single"
@@ -99,23 +112,20 @@ if [ -z "$IF0" ]; then
 			   echo "Pass the two ports explicitly: qsfp-loopback-test IFACE0 IFACE1"
 			   exit 1 ;;
 		esac
+	elif [ -z "$IF1" ]; then
+		echo "ERROR: need two interfaces (or --single)"; usage
 	fi
-elif [ -z "$IF1" ]; then
-	[ "$SINGLE" = "1" ] || { echo "ERROR: need two interfaces (or --single)"; usage; }
-	IF1="$IF0"
+	IFLIST="$IF0 $IF1"
 fi
-[ "$SINGLE" = "1" ] && IF1="$IF0"
 
-for i in $IF0 $IF1; do
+for i in $IFLIST; do
 	[ -e "/sys/class/net/$i" ] || { echo "ERROR: interface '$i' not found"; exit 1; }
 done
-
-MAC0=$(cat /sys/class/net/$IF0/address)
-MAC1=$(cat /sys/class/net/$IF1/address)
 
 # Result bookkeeping. Verdict variables are only ever set in the main shell
 # (never inside $(...)), so FAILED reliably reaches the exit code.
 R_LINK=-; R_L2_01=-; R_L2_10=-; R_PING=-; R_IPERF=-
+SUM_SINGLE=""
 FAILED=0
 
 # Cleanup (runs on exit): stop pktgen, kill iperf3, delete the namespaces
@@ -132,12 +142,14 @@ trap cleanup EXIT INT TERM
 echo "==========================================================================="
 echo " QSFP28 loopback test"
 if [ "$SINGLE" = "1" ]; then
-	echo "   mode   : single port, self-loopback (loopback plug in $IF0)"
-	echo "   port   : $IF0  ($MAC0)"
+	echo "   mode   : self-loopback (passive loopback plug in each port under test)"
+	for i in $IFLIST; do
+		echo "   port   : $i  ($(cat /sys/class/net/$i/address))"
+	done
 else
 	echo "   mode   : port-to-port (DAC cable between the two QSFP ports)"
-	echo "   port A : $IF0  ($MAC0)"
-	echo "   port B : $IF1  ($MAC1)"
+	echo "   port A : $IF0  ($(cat /sys/class/net/$IF0/address))"
+	echo "   port B : $IF1  ($(cat /sys/class/net/$IF1/address))"
 fi
 echo "   pktgen : $COUNT frames x $PKTSIZE bytes per direction"
 echo "==========================================================================="
@@ -148,7 +160,7 @@ echo "==========================================================================
 # retries alignment about once a second, so allow a generous timeout.
 # --------------------------------------------------------------------------
 printf "\n[1/4] Link check ... "
-for i in $IF0 $IF1; do
+for i in $IFLIST; do
 	ip link set "$i" up 2>/dev/null
 	# IPv6 autoconf multicast would pollute the L2 frame counters.
 	[ -e "/proc/sys/net/ipv6/conf/$i/disable_ipv6" ] && \
@@ -156,26 +168,33 @@ for i in $IF0 $IF1; do
 done
 t=0
 while [ $t -lt "$LINK_WAIT" ]; do
-	c0=$(cat /sys/class/net/$IF0/carrier 2>/dev/null || echo 0)
-	c1=$(cat /sys/class/net/$IF1/carrier 2>/dev/null || echo 0)
-	[ "$c0" = "1" ] && [ "$c1" = "1" ] && break
+	all_up=1
+	for i in $IFLIST; do
+		c=$(cat /sys/class/net/$i/carrier 2>/dev/null || echo 0)
+		[ "$c" = "1" ] || all_up=0
+	done
+	[ "$all_up" = "1" ] && break
 	sleep 1; t=$((t + 1))
 done
-if [ "$c0" = "1" ] && [ "$c1" = "1" ]; then
+if [ "$all_up" = "1" ]; then
 	R_LINK="PASS"; echo "PASS (carrier on after ${t}s)"
 else
-	R_LINK="FAIL (no carrier after ${LINK_WAIT}s: $IF0=$c0 $IF1=$c1)"; FAILED=1
+	states=""
+	for i in $IFLIST; do
+		states="$states $i=$(cat /sys/class/net/$i/carrier 2>/dev/null || echo 0)"
+	done
+	R_LINK="FAIL (no carrier after ${LINK_WAIT}s:$states)"; FAILED=1
 	echo "$R_LINK"
 	echo "  Check that the cable/plug is seated and is a PASSIVE copper part"
-	echo "  (optical 100G modules are not rated for 40G lane speeds)."
+	echo "  (100G AOCs / SR4 optics are not rated for 40G lane speeds)."
 	R_L2_01="SKIP"; R_L2_10="SKIP"; R_PING="SKIP"; R_IPERF="SKIP"
 fi
 
 # --------------------------------------------------------------------------
 # Phase 2: L2 pktgen blast. Frames leave TXIF addressed to RXIF's MAC, cross
-# the cable, and must all be counted by RXIF - full-size and error-free.
-# Runs in the root namespace (no IP addresses needed at L2).
-# Sets L2V to PASS or "FAIL (reason)".
+# the cable (or loop back through the plug when TXIF == RXIF), and must all
+# be counted by RXIF - full-size and error-free. Runs in the root namespace
+# (no IP addresses needed at L2). Sets L2V to PASS or "FAIL (reason)".
 # --------------------------------------------------------------------------
 l2_blast() {
 	TXIF="$1"; RXIF="$2"; DSTMAC="$3"
@@ -221,20 +240,26 @@ if [ "$R_LINK" = "PASS" ]; then
 		R_L2_01="FAIL (pktgen kernel module not available)"; FAILED=1
 		R_L2_10="SKIP"
 		echo "      $R_L2_01"
+		[ "$SINGLE" = "1" ] && SUM_SINGLE="  L2 self-loopback : $R_L2_01\n"
+	elif [ "$SINGLE" = "1" ]; then
+		for i in $IFLIST; do
+			l2_blast "$i" "$i" "$(cat /sys/class/net/$i/address)"
+			[ "$L2V" = "PASS" ] || FAILED=1
+			SUM_SINGLE="${SUM_SINGLE}  L2 self-loopback $i : $L2V\n"
+		done
 	else
+		MAC0=$(cat /sys/class/net/$IF0/address)
+		MAC1=$(cat /sys/class/net/$IF1/address)
 		l2_blast "$IF0" "$IF1" "$MAC1"
 		R_L2_01="$L2V"; [ "$L2V" = "PASS" ] || FAILED=1
-		if [ "$SINGLE" = "1" ]; then
-			R_L2_10="SKIP"
-		else
-			l2_blast "$IF1" "$IF0" "$MAC0"
-			R_L2_10="$L2V"; [ "$L2V" = "PASS" ] || FAILED=1
-		fi
+		l2_blast "$IF1" "$IF0" "$MAC0"
+		R_L2_10="$L2V"; [ "$L2V" = "PASS" ] || FAILED=1
 	fi
 fi
 
 # --------------------------------------------------------------------------
-# Phase 3 + 4: IP tests in isolated namespaces (dual-port mode only).
+# Phase 3 + 4: IP tests in isolated namespaces (dual-port mode only; a
+# loopback plug has no second endpoint to talk to).
 # --------------------------------------------------------------------------
 if [ "$R_LINK" = "PASS" ] && [ "$SINGLE" = "0" ]; then
 	printf "[3/4] IPv4 ping across the cable ... "
@@ -304,7 +329,9 @@ echo ""
 echo "============================ summary ====================================="
 echo "  link             : $R_LINK"
 if [ "$SINGLE" = "1" ]; then
-	echo "  L2 self-loopback : $R_L2_01"
+	printf "%b" "$SUM_SINGLE"
+	echo "  (self-loopback validates each port's datapath; use a DAC cable"
+	echo "   between the ports for the cross-port ping/iperf3 phases)"
 else
 	echo "  L2 $IF0 -> $IF1  : $R_L2_01"
 	echo "  L2 $IF1 -> $IF0  : $R_L2_10"

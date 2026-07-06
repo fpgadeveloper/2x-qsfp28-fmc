@@ -33,5 +33,6 @@
 * Bundled `qsfp-loopback-test` rootfs self-test (all PetaLinux and Yocto
   images): with a passive DAC cable between the two QSFP28 ports it
   validates both datapaths end to end (pktgen L2 frame blast, then
-  namespaced ping and iperf3 across the cable); single-port targets run
-  it with `--single` and a passive loopback module.
+  namespaced ping and iperf3 across the cable); with passive loopback
+  modules instead, `--single` self-tests every plugged port (the only
+  mode on single-port targets).
