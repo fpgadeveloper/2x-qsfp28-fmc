@@ -18,3 +18,7 @@ SRC_URI:append = " file://0001-clk-si5324-enable-ckout2-for-2x-qsfp28-fmc.patch"
 # carrier monitor that re-attempts GT/RX alignment while the link is down
 # (the GT refclk only starts once Linux programs the FMC's Si5328).
 SRC_URI:append = " file://0002-net-axienet-add-hse-cmac-l-ethernet-support.patch"
+
+# Fix from first hardware bring-up (zcu106_hpc0): the HSE mactype must be
+# exempt from the probe-time pcs-handle/phy-handle requirement, like MRMAC.
+SRC_URI:append = " file://0003-net-axienet-hse-exempt-pcs-handle-requirement.patch"
