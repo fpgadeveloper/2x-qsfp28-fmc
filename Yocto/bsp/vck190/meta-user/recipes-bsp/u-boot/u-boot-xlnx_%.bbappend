@@ -10,4 +10,4 @@
 # time inside a bbappend).
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-SRC_URI:append = " file://large-dtb-sp-bss.cfg"
+SRC_URI:append = " file://large-dtb-sp-bss.cfg file://vck190-vadj-bootcmd.cfg"
