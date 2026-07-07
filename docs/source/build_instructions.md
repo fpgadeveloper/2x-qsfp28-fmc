@@ -104,6 +104,24 @@ bitstream — for example, to explore or modify the design in the Vivado GUI —
 run `./build.sh project --target <target>` instead, then open the project
 from `Vivado/<target>/`.
 
+### Build Vitis workspace
+
+This creates the Vitis workspace and compiles the bare-metal
+[echo server](echo_server), producing the boot file — a `BOOT.BIN` for the
+Zynq UltraScale+ and Versal targets, or a `qsfp_boot.bit` (bitstream with
+the ELF embedded) for the MicroBlaze targets. The Vivado XSA is built first
+if it does not already exist:
+
+```
+./build.sh standalone --target <target>
+```
+
+Valid targets for the standalone application are:
+{% for design in data.designs if design.baremetal and design.publish %} `{{ design.label }}`{{ ", " if not loop.last else "." }} {% endfor %}
+
+The workspace is created in `Vitis/<target>_workspace` and the boot files
+are gathered in `Vitis/boot/<target>/`.
+
 ### Build PetaLinux
 
 The PetaLinux build requires a native Linux machine (one of the [supported

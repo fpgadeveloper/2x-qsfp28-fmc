@@ -77,12 +77,14 @@ Notes:
 
 ## Software
 
-These reference designs can be driven within a PetaLinux environment.
-The repository includes all necessary scripts and code to build the PetaLinux environments. The table
-below outlines the corresponding applications available in each environment:
+These reference designs can be driven within a PetaLinux environment, or by the included
+bare-metal echo-server test application. The repository includes all necessary scripts and code
+to build both environments. The table below outlines the corresponding applications available
+in each environment:
 
 | Environment      | Available Applications  |
 |------------------|-------------------------|
+| Standalone       | Raw-Ethernet echo server (ARP, ICMP ping, UDP echo on all QSFP28 ports) |
 | PetaLinux        | Built-in Linux commands<br>Additional tools: ethtool, iperf3 |
 
 ## Build instructions
@@ -115,6 +117,15 @@ source the tool settings yourself before running the build.
 
 ```
 ./build.sh xsa --target <target>
+```
+
+#### Build the standalone application
+
+Builds the Vitis workspace and the baremetal boot file (`BOOT.BIN`, or a
+`qsfp_boot.bit` with the ELF embedded for the MicroBlaze targets):
+
+```
+./build.sh standalone --target <target>
 ```
 
 #### Build PetaLinux (Linux only)
