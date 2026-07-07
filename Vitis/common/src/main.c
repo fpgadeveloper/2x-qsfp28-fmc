@@ -46,6 +46,9 @@
 #if !defined(__MICROBLAZE__)
 #include "xil_mmu.h"
 #include "vadj.h"
+#else
+#include "bspconfig.h"
+#include "xuartns550_l.h"
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -447,6 +450,16 @@ int main(void)
 {
 	int n, i;
 	u32 loops = 0;
+
+#if defined(__MICROBLAZE__) && defined(STDOUT_BASEADDRESS)
+	/* The 16550's baud divisor comes up unprogrammed out of reset and the
+	 * standalone BSP's outbyte() never sets it (Linux normally does):
+	 * without a divisor the UART transmits nothing and the first
+	 * xil_printf spins forever. Program 115200-8N1 before printing. */
+	XUartNs550_SetBaud(STDOUT_BASEADDRESS, XPAR_AXI_UART16550_0_CLOCK_FREQ,
+			   115200);
+	XUartNs550_SetLineControlReg(STDOUT_BASEADDRESS, XUN_LCR_8_DATA_BITS);
+#endif
 
 	xil_printf("\r\n-------------------------------------------------\r\n");
 	xil_printf("2x QSFP28 FMC echo server - %s\r\n", BOARD_NAME);
