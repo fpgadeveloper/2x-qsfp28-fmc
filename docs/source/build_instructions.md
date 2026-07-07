@@ -171,10 +171,59 @@ connection), you can follow these instructions.
 
 The PetaLinux builds will then be configured for offline build.
 
+### Build Yocto
+
+This builds the Yocto / EDF image (AMD's Embedded Development Framework,
+the announced successor to PetaLinux) using AMD's recommended
+`gen-machineconf` / `parse-sdt` flow. It requires a native Linux machine
+with [Google's `repo` tool](https://gerrit.googlesource.com/git-repo/) on
+the `PATH`; the `xsct`/`sdtgen` tools come from Vitis, which the runner
+locates and sources itself. The Vivado XSA is built first if it does not
+already exist:
+
+```
+./build.sh yocto --target <target>
+```
+
+Valid targets for Yocto are:
+{% for design in data.designs if design.yocto and design.publish %} `{{ design.label }}`{{ ", " if not loop.last else "." }} {% endfor %}
+
+The first build of a target runs `repo sync` (several GB of git history)
+and bitbake from scratch, so it takes a while; subsequent builds are
+incremental. The output products (`BOOT.BIN`, the kernel, `boot.scr`,
+`system.dtb`, `rootfs.wic.xz`) are gathered into
+`Yocto/<target>/images/linux/`.
+
+#### Yocto offline build
+
+To build the Yocto projects offline (or simply faster), point the build at
+a locally extracted AMD sstate-cache mirror.
+
+1. Download the sstate-cache artefacts from the Xilinx downloads site and
+   extract them to a single location, for example `/home/user/yocto-sstate`,
+   leaving the following directory structure:
+   ```
+   /home/user/yocto-sstate
+                          +---  aarch64       (Zynq UltraScale+ and Versal)
+                          +---  arm           (Zynq-7000)
+                          +---  microblaze    (PMU/PLM firmware)
+                          +---  downloads
+   ```
+2. Create a text file called `offline.txt` in the `Yocto` directory of the
+   repository containing a single line with that path, written with NO
+   TRAILING FORWARD SLASH:
+   ```
+   /home/user/yocto-sstate
+   ```
+
+The Yocto build will then auto-detect which architecture sub-directories
+are present and configure the build to use the mirror.
+
 ### Build everything
 
-This builds everything that the target supports — the Vivado project and XSA
-and the PetaLinux image — and gathers the boot images into `bootimages/*.zip`:
+This builds everything that the target supports — the Vivado project and XSA,
+the standalone application, the PetaLinux image and the Yocto image — and
+gathers the boot images into `bootimages/*.zip`:
 
 ```
 ./build.sh all --target <target>

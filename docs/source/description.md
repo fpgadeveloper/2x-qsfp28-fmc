@@ -123,12 +123,15 @@ with fewer ports and/or the 40G subsystem MAC, as described above.
 
 ## Supported Software
 
-This reference design is driven within a PetaLinux environment. The repository includes all
-necessary scripts and code to build the PetaLinux environment. The table below outlines the
-corresponding applications available:
+These reference designs can be driven by a standalone (bare-metal) application or from
+within an embedded Linux environment, built with either of two flows: PetaLinux, or
+Yocto / EDF (AMD's Embedded Development Framework, the announced successor to
+PetaLinux). The repository includes all necessary scripts and code to build each of
+them. The table below outlines the corresponding applications available:
 
 | Environment      | Available Applications  |
 |------------------|-------------------------|
+| Standalone       | Raw-Ethernet [echo server](echo_server) (ARP, ICMP ping, UDP echo on all QSFP28 ports) |
 | PetaLinux / Yocto | Built-in Linux commands<br>Additional tools: ethtool, iperf3, iproute2<br>Bundled self-test: `qsfp-loopback-test` |
 
 [2x QSFP28 FMC]: https://docs.opsero.com/op120/datasheet/overview/

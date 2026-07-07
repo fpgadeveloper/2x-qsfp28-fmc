@@ -3,6 +3,7 @@
 In order to test this design on hardware, you will need the following:
 
 * Vivado 2025.2
+* Vitis 2025.2
 * PetaLinux Tools 2025.2
 * [2x QSFP28 FMC]
 * [AMD Versal Integrated MRMAC License](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html)

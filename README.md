@@ -77,15 +77,37 @@ Notes:
 
 ## Software
 
-These reference designs can be driven within a PetaLinux environment, or by the included
-bare-metal echo-server test application. The repository includes all necessary scripts and code
-to build both environments. The table below outlines the corresponding applications available
-in each environment:
+These reference designs can be driven by a **standalone** (bare-metal) application or
+from within an embedded **Linux** environment. The repository includes all the scripts
+and code needed to build either one.
 
-| Environment      | Available Applications  |
-|------------------|-------------------------|
-| Standalone       | Raw-Ethernet echo server (ARP, ICMP ping, UDP echo on all QSFP28 ports) |
-| PetaLinux        | Built-in Linux commands<br>Additional tools: ethtool, iperf3 |
+For Linux, two build flows are provided, both based on AMD's 2025.2 tools:
+
+* **PetaLinux** — AMD's long-standing embedded Linux build tool (see the `PetaLinux/`
+  directory).
+* **Yocto / EDF** — AMD's Embedded Development Framework, the announced successor to
+  PetaLinux, built with the `gen-machineconf parse-sdt` flow (see the `Yocto/`
+  directory).
+
+> [!IMPORTANT]
+> **The PetaLinux flow is being retired for this repository.** Version 2025.2 is the
+> last tool release for which we will support PetaLinux; from the next tool version
+> onward, Linux images will be built with the Yocto / EDF flow only. New work should
+> use the Yocto flow.
+
+For 2025.2, both flows produce an equivalent Linux image with the same applications,
+so you can pick whichever fits your workflow. The [target design tables](#target-designs)
+show which boards are supported by each flow.
+
+| Environment | Build flow          | Available applications |
+|-------------|---------------------|------------------------|
+| Standalone  | Vitis               | Raw-Ethernet echo server (ARP, ICMP ping, UDP echo on all QSFP28 ports) |
+| Linux       | PetaLinux  /  Yocto | Built-in Linux commands<br>Additional tools: ethtool, iperf3<br>Bundled self-test: `qsfp-loopback-test` |
+
+The standalone echo server brings up the QSFP28 ports and answers ARP, ICMP ping and
+UDP echo on each of them, with no operating system involved. Under Linux, the same
+ports come up as standard network interfaces driven by the AXI Ethernet driver, which
+you can configure and test with the bundled tools.
 
 ## Build instructions
 
