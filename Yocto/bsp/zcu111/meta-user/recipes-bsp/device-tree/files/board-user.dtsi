@@ -1,29 +1,8 @@
-/include/ "system-conf.dtsi"
-/include/ "port-config.dtsi"
-
-/* 2025.2 gen-machineconf assigns port-number=0 to uart1, making ttyPS0 map
- * to uart1. Vitis bsp.yaml confirms these boards use psu_uart_0 for stdout,
- * so force ttyPS0 back to uart0. */
-&uart0 {
-   port-number = <0>;
-};
-&uart1 {
-   port-number = <1>;
-};
-/ {
-   aliases {
-      serial0 = &uart0;
-      serial1 = &uart1;
-   };
-   chosen {
-      stdout-path = "serial0:115200n8";
-   };
-};
 
 /* PS GEM3 (board RJ45): the SDT flow does not describe the board-level
  * TI DP83867 PHY, so Linux falls back to the Generic PHY driver and the
  * RGMII clock delays are never programmed - the link negotiates 1G but
- * passes no packets. Values from the official zynqmp-zcu216-revA.dts
+ * passes no packets. Values from the official zynqmp-zcu111-revA.dts
  * (PHY at MDIO address 0xc; its reset-gpios line is omitted because the
  * TCA6416 expander it references is not in the SDT device tree - the
  * PHY powers up out of reset from its straps). The fixed MAC replaces
@@ -31,7 +10,7 @@
  * stable across boots.
  */
 &gem3 {
-	local-mac-address = [00 0a 35 06 21 16];
+	local-mac-address = [00 0a 35 06 21 11];
 	phy-handle = <&gem3_phy>;
 	mdio {
 		#address-cells = <1>;
