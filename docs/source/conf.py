@@ -19,7 +19,7 @@ numfig = True
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = '100G Ethernet Ref Design for 2x QSFP28 FMC'
+project = '100G/40G Ethernet Ref Designs for 2x QSFP28 FMC'
 copyright = '2025, Opsero Electronic Design Inc.'
 author = 'Jeff Johnson'
 

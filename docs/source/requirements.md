@@ -6,8 +6,10 @@ In order to test this design on hardware, you will need the following:
 * Vitis 2025.2
 * PetaLinux Tools 2025.2
 * [2x QSFP28 FMC]
-* [AMD Versal Integrated MRMAC License](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html)
-  (a free, no-cost license is required to generate a bitstream that uses the integrated MRMAC)
+* A license for the target's Ethernet MAC IP — no cost for the hardened 100G MACs (Versal
+  MRMAC, UltraScale+ CMAC), purchased (30-day evaluation available) for the 40G/50G Ethernet
+  Subsystem used by the 40G targets; see the license requirements in the
+  [build instructions](build_instructions)
 * One of the supported carrier boards listed below
 * Two 100G QSFP28 modules, or - for the bundled `qsfp-loopback-test` self-test - a QSFP28
   passive DAC cable between the two ports (single-port targets: a passive loopback module)

@@ -14,12 +14,23 @@ git clone https://github.com/fpgadeveloper/2x-qsfp28-fmc.git
 
 ## License requirements
 
-The design uses the Versal Integrated MRMAC, which requires a (free, no-cost) license to generate
-a bitstream. The license can be obtained from the AMD Xilinx Licensing site. The VCK190 target
-also requires the Vivado *Enterprise* Edition (a 30-day evaluation license is available from the
-AMD Xilinx Licensing site).
+Every target design uses one of three AMD Ethernet MAC IPs, and all three require a license
+to generate a bitstream — but they are licensed differently. The two hardened 100G MACs have
+**no-cost** licenses that just need to be added to your account on the
+[AMD licensing site](https://www.xilinx.com/getlicense), while the soft 40G/50G MAC used by
+the 40G designs is a **purchased** core, with a 30-day evaluation license available for
+testing:
 
-Additionally, some designs use IP cores that are licensed separately from the Vivado edition itself (for example: TEMAC, XXV Ethernet, HDMI). The **IP License** column in the tables below indicates the designs that require such a license to generate a bitstream; evaluation licenses are generally available from AMD for testing.
+| Ethernet MAC IP | License | Required by targets |
+|-----------------|---------|---------------------|
+| [Integrated 100G Multirate Ethernet MAC (MRMAC)](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html) | No cost | `vck190_fmcp1` |
+| [UltraScale+ Integrated 100G Ethernet (CMAC)](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/cmac_usplus.html) | No cost | `zcu111`, `zcu208`, `zcu216`, `kcu116` |
+| [40G/50G Ethernet Subsystem](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/ef-di-50gemac.html) | Purchase (30-day evaluation available) | `zcu102_hpc0`, `zcu106_hpc0`, `zcu111_ss`, `zcu208_ss`, `zcu216_ss`, `kcu116_ss` |
+
+Separately from the IP licenses, some target boards require the Vivado *Enterprise* Edition
+(a 30-day evaluation license is available from the AMD licensing site) — the **Vivado
+Edition** column in the tables below shows which. The **IP License** column indicates the
+designs that need a separately-licensed IP core to generate a bitstream.
 
 
 ## Target designs

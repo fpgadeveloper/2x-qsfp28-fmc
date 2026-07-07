@@ -1,18 +1,30 @@
-# 100G Ethernet Reference Design for the Opsero 2x QSFP28 FMC
+# 100G/40G Ethernet Reference Designs for the Opsero 2x QSFP28 FMC
 
 ## Description
 
-This project demonstrates the use of the Opsero [2x QSFP28 FMC] (OP120) with 100G QSFP28 modules
-on AMD Versal adaptive SoC development boards. Each QSFP28 port is driven by the Versal
-[Integrated 100G Multirate Ethernet MAC (MRMAC)] configured for a single 100GbE (CAUI-4) channel,
-with packet data moved to/from DDR by an AXI MCDMA and driven under PetaLinux by the AXI Ethernet
-driver.
+This project demonstrates the use of the Opsero [2x QSFP28 FMC] (OP120) with QSFP28 modules on
+AMD Versal, Zynq UltraScale+ and Kintex UltraScale+ development boards. Each QSFP28 port carries
+a single Ethernet channel over its four bonded transceiver lanes, at a line rate set by the
+target board's transceivers:
+
+* **100G (CAUI-4)** on the GTY-based boards, driven by a hardened 100G MAC — the
+  [Integrated 100G Multirate Ethernet MAC (MRMAC)] on the Versal VCK190, or the
+  [UltraScale+ Integrated 100G Ethernet (CMAC)] on the RFSoC boards (ZCU111/ZCU208/ZCU216)
+  and the Kintex UltraScale+ KCU116.
+* **40G (40GBASE-R4)** on the GTH-based ZCU102 and ZCU106, driven by the soft
+  [40G/50G Ethernet Subsystem] MAC/PCS — also available as alternative `_ss` targets of
+  the GTY boards.
+
+In every design, packet data is moved to/from DDR by an AXI MCDMA; the ports are driven under
+Linux (PetaLinux or Yocto) by the AXI Ethernet driver, or bare-metal by the included
+echo-server application. The KCU116 has no processing system, so it gets a Linux-capable
+MicroBlaze soft processor in front of the same datapath.
 
 ![2x QSFP28 FMC with VCK190](docs/source/images/vck190-with-2x-qsfp28-fmc_03.jpg "2x QSFP28 FMC with VCK190")
 
 Important links:
 
-* The user guide for these reference designs is hosted here: [100G Ethernet for 2x QSFP28 FMC docs](https://qsfp28.ethernetfmc.com "100G Ethernet for 2x QSFP28 FMC docs")
+* The user guide for these reference designs is hosted here: [2x QSFP28 FMC reference designs docs](https://qsfp28.ethernetfmc.com "2x QSFP28 FMC reference designs docs")
 * To report a bug: [Report an issue](https://github.com/fpgadeveloper/2x-qsfp28-fmc/issues "Report an issue").
 * For technical support: [Contact Opsero](https://opsero.com/contact-us "Contact Opsero").
 * To purchase the mezzanine card: [2x QSFP28 FMC order page](https://opsero.com/product/2x-qsfp28-fmc "2x QSFP28 FMC order page").
@@ -27,10 +39,27 @@ to find the version of this repository that matches your version of the tools.
 In order to test this design on hardware, you will need the following:
 
 * Vivado 2025.2
+* Vitis 2025.2
 * PetaLinux Tools 2025.2
 * [2x QSFP28 FMC]
 * One of the target platforms listed below
-* [AMD Versal Integrated MRMAC License](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html)
+* A license for the Ethernet MAC IP used by your target (see
+  [Ethernet IP licensing](#ethernet-ip-licensing) below)
+
+### Ethernet IP licensing
+
+Every target design uses one of three AMD Ethernet MAC IPs, and all three require a license
+to generate a bitstream — but they are licensed differently. The two hardened 100G MACs have
+**no-cost** licenses that just need to be added to your account on the
+[AMD licensing site](https://www.xilinx.com/getlicense), while the soft 40G/50G MAC used by
+the 40G designs is a **purchased** core, with a 30-day evaluation license available for
+testing:
+
+| Ethernet MAC IP | License | Required by targets |
+|-----------------|---------|---------------------|
+| [Integrated 100G Multirate Ethernet MAC (MRMAC)] | No cost | `vck190_fmcp1` |
+| [UltraScale+ Integrated 100G Ethernet (CMAC)] | No cost | `zcu111`, `zcu208`, `zcu216`, `kcu116` |
+| [40G/50G Ethernet Subsystem] | Purchase (30-day evaluation available) | `zcu102_hpc0`, `zcu106_hpc0`, `zcu111_ss`, `zcu208_ss`, `zcu216_ss`, `kcu116_ss` |
 
 ## Target designs
 
@@ -73,7 +102,10 @@ Notes:
 1. The Vivado Edition column indicates which designs are supported by the Vivado *Standard* Edition, the
    FREE edition which can be used without a license. Vivado *Enterprise* Edition requires
    a license however a 30-day evaluation license is available from the AMD Xilinx Licensing site.
-2. The Versal Integrated MRMAC requires a (free) license to generate a bitstream.
+2. All of the designs use an Ethernet MAC IP that requires a license to generate a bitstream
+   (see [Ethernet IP licensing](#ethernet-ip-licensing)): the 100G designs use a hardened MAC
+   with a no-cost license (MRMAC on the VCK190, CMAC on all others), while the 40G designs use
+   the 40G/50G Ethernet Subsystem, a purchased core with a 30-day evaluation license available.
 
 ## Software
 
@@ -191,3 +223,5 @@ updates on the awesome projects we work on.
 
 [2x QSFP28 FMC]: https://docs.opsero.com/op120/datasheet/overview/
 [Integrated 100G Multirate Ethernet MAC (MRMAC)]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html
+[UltraScale+ Integrated 100G Ethernet (CMAC)]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/cmac_usplus.html
+[40G/50G Ethernet Subsystem]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/ef-di-50gemac.html
