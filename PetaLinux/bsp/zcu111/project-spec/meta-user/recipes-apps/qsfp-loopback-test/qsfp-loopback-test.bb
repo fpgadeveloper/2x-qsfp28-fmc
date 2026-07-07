@@ -21,5 +21,8 @@ FILES:${PN} = "${bindir}/qsfp-loopback-test"
 # iperf3/ethtool: throughput phase and link diagnostics.
 # pktgen is a kernel module - enabled as CONFIG_NET_PKTGEN=m in the BSP's
 # kernel bsp.cfg; RRECOMMENDS pulls the package in wherever it is built.
-RDEPENDS:${PN} += "iproute2 iperf3 ethtool"
+# iproute2/iperf3/ethtool: needed by the test itself. i2c-tools/phytool:
+# bench debug standard - module EEPROM forensics (axi_iic) and MDIO/PHY
+# register access without a debugger.
+RDEPENDS:${PN} += "iproute2 iperf3 ethtool i2c-tools phytool"
 RRECOMMENDS:${PN} += "kernel-module-pktgen"
