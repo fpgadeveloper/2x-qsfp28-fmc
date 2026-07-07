@@ -17,8 +17,9 @@ target board's transceivers:
 
 In every design, packet data is moved to/from DDR by an AXI MCDMA; the ports are driven under
 Linux (PetaLinux or Yocto) by the AXI Ethernet driver, or bare-metal by the included
-echo-server application. The KCU116 has no processing system, so it gets a Linux-capable
-MicroBlaze soft processor in front of the same datapath.
+echo-server application. The KCU116 has no processing system, so it gets a MicroBlaze soft
+processor in front of the same datapath and is supported with the **standalone application
+only** (neither Linux flow supports MicroBlaze going forward).
 
 ![2x QSFP28 FMC with VCK190](docs/source/images/vck190-with-2x-qsfp28-fmc_03.jpg "2x QSFP28 FMC with VCK190")
 
@@ -77,7 +78,7 @@ the FMC connector on which to connect the 2x QSFP28 FMC.
 | [ZCU111]              | `zcu111_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
 | [ZCU208]              | `zcu208_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
 | [ZCU216]              | `zcu216_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
-| [KCU116]              | `kcu116_ss`        | 40G        | 1x          | HPC         | :x:   | :white_check_mark: | Standard :free: | Required |
+| [KCU116]              | `kcu116_ss`        | 40G        | 1x          | HPC         | :x:   | :x:   | Standard :free: | Required |
 
 ### 100G designs
 
@@ -87,7 +88,7 @@ the FMC connector on which to connect the 2x QSFP28 FMC.
 | [ZCU111]              | `zcu111`           | 100G       | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
 | [ZCU208]              | `zcu208`           | 100G       | 1x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
 | [ZCU216]              | `zcu216`           | 100G       | 1x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
-| [KCU116]              | `kcu116`           | 100G       | 1x          | HPC         | :x:   | :white_check_mark: | Standard :free: | Required |
+| [KCU116]              | `kcu116`           | 100G       | 1x          | HPC         | :x:   | :x:   | Standard :free: | Required |
 
 [ZCU102]: https://www.xilinx.com/zcu102
 [ZCU106]: https://www.xilinx.com/zcu106
@@ -129,7 +130,9 @@ For Linux, two build flows are provided, both based on AMD's 2025.2 tools:
 
 For 2025.2, both flows produce an equivalent Linux image with the same applications,
 so you can pick whichever fits your workflow. The [target design tables](#target-designs)
-show which boards are supported by each flow.
+show which boards are supported by each flow. The MicroBlaze-based KCU116 targets have no
+Linux flow — they are supported with the standalone application only. (Their unsupported
+classic-MicroBlaze PetaLinux BSP remains in `PetaLinux/bsp/kcu116/` for reference.)
 
 | Environment | Build flow          | Available applications |
 |-------------|---------------------|------------------------|

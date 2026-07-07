@@ -80,18 +80,19 @@ The Kintex UltraScale+ KCU116 has no processor system, so the `kcu116` (100G CMA
 caches) running from the board's 1GB DDR4 (MIG), with the same per-port MAC + AXI MCDMA
 datapath as the other targets, plus an AXI UART16550 console, AXI timer/interrupt
 controller and an AXI Quad SPI reaching the board's configuration flash through the
-STARTUPE3 primitive (for flash boot and Linux MTD access):
+STARTUPE3 primitive (for flash boot):
 
 * The KCU116 FMC HPC connector wires only DP0-3 (one GTY quad, bank 227), so both KCU116
   targets are **single-port** (QSFP slot 0); the QSFP slot 1 module is held in reset.
 * The KU5P device's single CMAC (`CMACE4_X0Y0`) reaches the FMC quad, giving a true 100G
   hard-MAC port on a Standard-Edition (free Vivado license) device.
-* These targets build Linux with **PetaLinux** (classic MicroBlaze flow). The AMD EDF Yocto
-  flow in 2025.2 does not yet support Linux on MicroBlaze, so the Yocto build is not
-  offered for KCU116 in this release.
-* The KCU116's microSD slot is connected to the board's system controller (not the FPGA),
-  so Linux runs with its root filesystem in RAM (initramfs). Boot from the QSPI flash
-  (`boot.mcs`) or over JTAG.
+* These targets are supported with the **standalone [echo server](echo_server) only** —
+  there is no Linux flow for them: the AMD EDF Yocto flow does not support Linux on
+  MicroBlaze, and the PetaLinux flow is being retired for this repository. (An unsupported
+  classic-MicroBlaze PetaLinux BSP remains in `PetaLinux/bsp/kcu116/` for reference.)
+* The KCU116's microSD slot is connected to the board's system controller (not the FPGA).
+  Boot the standalone application from the QSPI configuration flash (`qsfp_boot.bit`
+  written as an MCS) or over JTAG.
 
 ## Supported Hardware Platforms
 

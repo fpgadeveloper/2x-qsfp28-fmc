@@ -19,13 +19,11 @@ zcu106_hpc0_target := zynqMP 0 0 ports-zu40g-01
 zcu111_ss_target := zynqMP 0 0 ports-zu40g-01
 zcu208_ss_target := zynqMP 0 0 ports-zu40g-01
 zcu216_ss_target := zynqMP 0 0 ports-zu40g-01
-kcu116_ss_target := microblaze 32 SPIx4 ports-mb40g-0
 # 100G designs
 vck190_fmcp1_target := versal 0 0 ports-versal-01
 zcu111_target := zynqMP 0 0 ports-zu100g-01
 zcu208_target := zynqMP 0 0 ports-zu100g-0
 zcu216_target := zynqMP 0 0 ports-zu100g-0
-kcu116_target := microblaze 32 SPIx4 ports-mb100g-0
 # UPDATER END
 
 TARGET_LIST := $(sort $(patsubst %_target,%,$(filter %_target,$(.VARIABLES))))

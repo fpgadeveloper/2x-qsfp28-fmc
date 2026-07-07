@@ -158,7 +158,6 @@ connection), you can follow these instructions.
    same page where you downloaded PetaLinux tools). There are four of them:
    * aarch64 sstate-cache (for ZynqMP designs)
    * arm sstate-cache (for Zynq designs)
-   * microblaze sstate-cache (for Microblaze designs)
    * Downloads (for all designs)
 2. Extract the contents of those files to a single location on your hard
    drive, for this example we'll say `/home/user/petalinux-sstate`. That

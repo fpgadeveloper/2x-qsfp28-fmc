@@ -7,8 +7,8 @@ QSFP28 ports through the `xilinx_axienet` driver and MCDMA datapath.
 
 ```{note}
 For 2025.2 both the PetaLinux and Yocto flows are supported and produce an equivalent
-image (KCU116 is PetaLinux-only: the EDF Yocto flow does not yet support Linux on
-MicroBlaze in this release). From the next tool version onward, the PetaLinux flow for this repository
+image. The MicroBlaze-based KCU116 targets have no Linux flow (EDF does not support
+Linux on MicroBlaze) — they are supported with the standalone application only. From the next tool version onward, the PetaLinux flow for this repository
 will be retired and Yocto will be the only supported flow.
 ```
 

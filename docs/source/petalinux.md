@@ -101,21 +101,15 @@ to the FAT32 partition and extract `root/rootfs.tar.gz` to the ext4 partition.
 
 The default login is username `petalinux`; on first login you will be prompted to set a password.
 
-## Boot from QSPI flash (KCU116)
+## KCU116 (MicroBlaze targets)
 
-The KCU116 targets (`kcu116`, `kcu116_ss`) run Linux on a MicroBlaze soft CPU and have no
-SD card available to the FPGA (the board's microSD slot is wired to the system
-controller). The root filesystem is an **initramfs** held in DDR, and the board boots
-from its QSPI configuration flash using the `boot.mcs` image produced by the build
-(bitstream + fs-boot + u-boot + kernel/initramfs):
-
-1. Open the Vivado Hardware Manager, connect to the board and add the configuration
-   memory device (`mt25qu256-spi-x1_x2_x4`), then program it with:
-   `PetaLinux/<target>/images/linux/boot.mcs`
-2. Set the KCU116 configuration mode switch SW15 to Master SPI (0101, the factory
-   default) and power-cycle or press PROG.
-3. Open the USB-UART at 115200 baud: the FPGA configures from flash, fs-boot loads
-   u-boot, and u-boot boots the kernel with the built-in initramfs root filesystem.
+```{note}
+The MicroBlaze-based KCU116 targets (`kcu116`, `kcu116_ss`) have **no supported Linux
+flow**: the EDF Yocto flow does not support Linux on MicroBlaze, and the PetaLinux flow
+is being retired for this repository. These targets are supported with the standalone
+[echo server](echo_server) only. An unsupported classic-MicroBlaze PetaLinux BSP remains
+in `PetaLinux/bsp/kcu116/` for reference.
+```
 
 ## Boot via JTAG
 
@@ -131,9 +125,6 @@ from the Vivado release notes.
 The Versal design stores the root filesystem on the SD card, so you must still
 prepare and connect the SD card before booting via JTAG. If you boot via JTAG without the SD card,
 the boot will hang at a message similar to: `Waiting for root device /dev/mmcblk0p2...`
-The KCU116 targets need no SD card — their root filesystem is an initramfs bundled with
-the kernel — so `petalinux-boot --jtag --kernel` boots them to a prompt directly
-(it downloads the bitstream and the kernel over JTAG).
 ```
 
 ### Setup hardware
