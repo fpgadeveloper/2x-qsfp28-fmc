@@ -630,14 +630,6 @@ def stage_petalinux(ctx: Context):
     # Delegate to the tested Makefile flow -- make always exists on Linux.
     cmd = ["make", "-C", str(ctx.repo.root / "PetaLinux"),
            "petalinux", f"TARGET={ctx.target}", f"JOBS={ctx.jobs}"]
-    # MicroBlaze targets package boot.mcs via `petalinux-package boot --format
-    # MCS`, which invokes vivado (write_cfgmem) -- put its bin dir on PATH
-    # (appended, so the PetaLinux environment keeps precedence).
-    extra_env = None
-    vivado = find_tool("Vivado", ctx.viv_ver)
-    if vivado:
-        extra_env = {"PATH": os.pathsep.join(
-            [os.environ.get("PATH", ""), str(vivado / "bin")])}
     if not os.environ.get("PETALINUX"):
         settings = find_petalinux_settings(ctx.viv_ver)
         if not settings:
@@ -645,9 +637,9 @@ def stage_petalinux(ctx: Context):
                  f"PetaLinux Tools or source settings.sh before running.")
         rc = run_tool(["bash", "-c",
                        f'source "{settings}" >/dev/null && ' + shlex.join(cmd)],
-                      cwd=ctx.repo.root, extra_env=extra_env)
+                      cwd=ctx.repo.root)
     else:
-        rc = run_tool(cmd, cwd=ctx.repo.root, extra_env=extra_env)
+        rc = run_tool(cmd, cwd=ctx.repo.root)
     # The PetaLinux Makefile can exit 0 without producing images (e.g. bad
     # environment) -- verify like every other stage.
     boot_ok = (ctx.petl_img / "BOOT.BIN").is_file() or (ctx.petl_img / "boot.mcs").is_file()
@@ -722,8 +714,14 @@ def stage_yocto(ctx: Context):
         shutil.copyfile(ctx.xsa, hw_xsa)
     # 3. Configure (sdtgen + gen-machineconf parse-sdt + BSP/overlay/sstate).
     #    Re-run when the XSA or the board conf is newer than the done-marker.
-    board = ctx.target.split("_")[0]
-    bsp = ydir / "bsp" / board
+    #    Prefer a target-specific bsp (e.g. bsp/zcu102_hpc1) over the board-level
+    #    one (bsp/zcu102) when it exists -- mirrors the PetaLinux convention where
+    #    a design variant whose hardware differs (e.g. fewer MIPI camera ports)
+    #    gets its own bsp instead of sharing the board's.
+    bsp = ydir / "bsp" / ctx.target
+    if not bsp.is_dir():
+        bsp = ydir / "bsp" / ctx.target.split("_")[0]
+    board = bsp.name
     conf_append = bsp / "conf" / "local.conf.append"
     done = work / "configdone.txt"
     offline = ydir / "offline.txt"
