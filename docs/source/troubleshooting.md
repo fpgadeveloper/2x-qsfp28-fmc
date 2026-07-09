@@ -79,7 +79,11 @@ the four CAUI-4 lanes are not aligning — check, in order:
    100GbE CAUI-4.
 2. **Is FEC disabled on the partner?** This design runs CAUI-4 with **FEC off**. A 100G NIC or
    switch port configured for RS-FEC (Clause 91) will not link up against it — set the partner's
-   FEC to off/none (on a Linux host, `sudo ethtool --set-fec <iface> encoding off`).
+   FEC to off/none (on a Linux host, `sudo ethtool --set-fec <iface> encoding off`). **Force it
+   off — do not rely on `auto`:** a NIC left on FEC `auto` keeps probing RS-FEC and the link flaps
+   continuously (~8/s, ~100% packet loss), yet `ethtool --show-fec` still reports `Active: Off`, so
+   that readout is *not* proof of compliance. Verified 2026-07 against an Intel E810 (`ice`): FEC
+   `auto` → flap; forced `off` → <1 ms lock, rock-solid.
 3. **Is the Si5328 programmed?** `cat /sys/kernel/debug/clk/clk_summary | grep clk0` should show
    the GT reference clock at `322265625`. If it is wrong or zero, the Si5328 device tree node or
    the `clk-si5324` driver is not programming the clock.
