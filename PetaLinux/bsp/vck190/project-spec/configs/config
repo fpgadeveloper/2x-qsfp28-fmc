@@ -309,15 +309,17 @@ CONFIG_USER_LAYER_0=""
 CONFIG_SUBSYSTEM_BOOTARGS_GENERATED="console=ttyAMA0 earlycon=pl011,mmio32,0xFF000000,115200n8 root=/dev/ram0 rw init_fatal_sh=1"
 CONFIG_TMP_DIR_LOCATION="${PROOT}/build/tmp"
 
-# Quad SFP28 FMC configs
+# 2x QSFP28 FMC configs
 
-CONFIG_SUBSYSTEM_HOSTNAME="vck190-sfp28-2025-2"
-CONFIG_SUBSYSTEM_PRODUCT="vck190-sfp28-2025-2"
+CONFIG_SUBSYSTEM_HOSTNAME="vck190-qsfp-2025-2"
+CONFIG_SUBSYSTEM_PRODUCT="vck190-qsfp-2025-2"
 
 # SD card for root filesystem
+# The cmdline lands in the device tree /chosen/bootargs (boot.scr passes no
+# bootargs of its own). cma=1536M matches Yocto/bsp/vck190 BSP_EXTRA_BOOTARGS.
 
 CONFIG_SUBSYSTEM_BOOTARGS_AUTO=n
-CONFIG_SUBSYSTEM_USER_CMDLINE="console=ttyAMA0 earlycon=pl011,mmio32,0xFF000000,115200n8 clk_ignore_unused root=/dev/mmcblk0p2 rw rootwait rootfs=ext4 uio_pdrv_genirq.of_id=generic-uio"
+CONFIG_SUBSYSTEM_USER_CMDLINE="console=ttyAMA0 earlycon=pl011,mmio32,0xFF000000,115200n8 clk_ignore_unused root=/dev/mmcblk0p2 rw rootwait rootfs=ext4 uio_pdrv_genirq.of_id=generic-uio cma=1536M"
 
 CONFIG_SUBSYSTEM_ROOTFS_INITRD=n
 CONFIG_SUBSYSTEM_ROOTFS_EXT4=y

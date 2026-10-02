@@ -35,8 +35,19 @@ set_param board.repoPaths [get_property LOCAL_ROOT_DIR [xhub::get_xstores xilinx
 
 # Possible targets
 # UPDATER START
+# 40G designs
+dict set target_dict zcu102_hpc0 { xilinx.com zcu102 zynqmp { 0 1 } "40" }
+dict set target_dict zcu106_hpc0 { xilinx.com zcu106 zynqmp { 0 1 } "40" }
+dict set target_dict zcu111_ss { xilinx.com zcu111 zynqmp { 0 1 } "40" }
+dict set target_dict zcu208_ss { xilinx.com zcu208 zynqmp { 0 1 } "40" }
+dict set target_dict zcu216_ss { xilinx.com zcu216 zynqmp { 0 1 } "40" }
+dict set target_dict kcu116_ss { xilinx.com kcu116 mb { 0 } "40" }
 # 100G designs
 dict set target_dict vck190_fmcp1 { xilinx.com vck190 versal { 0 1 } "100" }
+dict set target_dict zcu111 { xilinx.com zcu111 zynqmp { 0 1 } "100" }
+dict set target_dict zcu208 { xilinx.com zcu208 zynqmp { 0 } "100" }
+dict set target_dict zcu216 { xilinx.com zcu216 zynqmp { 0 } "100" }
+dict set target_dict kcu116 { xilinx.com kcu116 mb { 0 } "100" }
 # UPDATER END
 
 # Function to display the options and get user input
@@ -241,6 +252,13 @@ if {[catch {source $bd_script_path} errmsg]} {
 # Generate the wrapper
 make_wrapper -files [get_files *${block_name}.bd] -top
 add_files -norecurse ${design_name}/${design_name}.gen/sources_1/bd/${block_name}/hdl/${block_name}_wrapper.v
+
+# Pin the top now that the wrapper exists. The 'top' set at project creation
+# could not be validated then (no wrapper yet), so automatic hierarchy mode
+# picks a replacement - and src/hdl holds RTL modules that a given family's
+# block design does not instantiate (e.g. axis_rx_frame_fifo on Versal),
+# which it may choose instead of the wrapper.
+set_property top ${block_name}_wrapper [get_filesets sources_1]
 
 # Update the compile order
 update_compile_order -fileset sources_1

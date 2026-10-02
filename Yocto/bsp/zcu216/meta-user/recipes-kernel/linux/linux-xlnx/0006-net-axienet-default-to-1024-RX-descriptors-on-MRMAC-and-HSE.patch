@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Opsero <support@opsero.com>
+Date: Mon, 28 Sep 2026 20:20:50 -0400
+Subject: [PATCH] net: axienet: default to 1024 RX descriptors on MRMAC and HSE
+ ports
+
+None of the MACs without a PHY that this BSP drives has RX backpressure:
+the MRMAC, the UltraScale+ CMAC and the 40G/50G subsystem (l_ethernet,
+both XAXIENET_HSE) present RX AXI-Streams without tready. The AXI MCDMA
+S2MM channel behind them silently discards a whole frame whenever the
+RX descriptor ring has no free descriptor. The driver's default ring of
+128 descriptors is refilled from NAPI; any scheduling gap longer than
+~128 frame times (~15 us of 1500-byte frames at 100G, ~40 us at 40G)
+therefore loses frames. The loss is invisible in the MAC and netdev
+error counters and only shows up as TCP retransmits and as the MCDMA
+S2MM packet-drop count (MCDMA base + 0x514).
+
+Measured with the MRMAC on VCK190 + Quad SFP28 FMC (TCP host->board,
+30 s): 10G 50415 retransmits with 128 RX BDs, 226 with 1024; 25G 73348
+with 128, 3599 with 1024. The HSE ports use the same MCDMA ring code.
+
+Default MRMAC and HSE ports to 1024 RX descriptors. The TX ring and all
+other MAC types keep their defaults; "ethtool -G" still overrides the
+value while the interface is down.
+
+Memory cost per port with a 1500-byte MTU: 1024 x ~2 KiB RX skbs plus
+1024 x 128 B coherent descriptors, i.e. ~2.1 MiB instead of ~0.26 MiB,
+allocated only while the interface is up.
+---
+ drivers/net/ethernet/xilinx/xilinx_axienet_main.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+index 657d80c22578..0ad9aadbb775 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+@@ -58,6 +58,11 @@
+ 
+ /* Descriptors defines for Tx and Rx DMA */
+ #define RX_BD_NUM_DEFAULT		128
++/* MRMAC / HSE (CMAC, l_ethernet) RX has no backpressure: the MCDMA S2MM drops
++ * whole frames whenever the RX ring has no free descriptor, so give those
++ * ports a deeper ring.
++ */
++#define RX_BD_NUM_NO_BP_DEFAULT		1024
+ #define TX_BD_NUM_MIN			(MAX_SKB_FRAGS + 1)
+ #define TX_BD_NUM_MAX			4096
+ #define RX_BD_NUM_MAX			4096
+@@ -5273,6 +5278,12 @@ static int axienet_probe(struct platform_device *pdev)
+ 	lp->hse_leth = of_device_is_compatible(pdev->dev.of_node,
+ 					       "xlnx,l-ethernet-4.0");
+ 
++	/* Still adjustable with "ethtool -G" while the interface is down */
++	if (lp->axienet_config &&
++	    (lp->axienet_config->mactype == XAXIENET_MRMAC ||
++	     lp->axienet_config->mactype == XAXIENET_HSE))
++		lp->rx_bd_num = RX_BD_NUM_NO_BP_DEFAULT;
++
+ 	/* Setup checksum offload, but default to off if not specified */
+ 	lp->features = 0;
+ #ifndef CONFIG_AXIENET_HAS_MCDMA
+-- 
+2.43.0
+

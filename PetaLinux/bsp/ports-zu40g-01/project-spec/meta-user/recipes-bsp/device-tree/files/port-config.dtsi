@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MIT
+// Copyright (C) 2025-2026, Opsero Electronic Design Inc.  All rights reserved.
+
+/*
+ * 2x QSFP28 FMC port config: ports-zu40g-01 (ZCU102/ZCU106).
+ * Both QSFP28 ports, each a 1x40GbE (40GBASE-R4) l_ethernet subsystem driven
+ * by the xilinx_axienet HSE support patch. Per-port wiring layered on the
+ * SDT-generated Linux device tree.
+ *
+ * BD interrupt order on pl_ps_irq0 (GIC SPI 121+N -> DT <0 89+N 4>):
+ *   0: port0 mm2s  1: port0 s2mm  2: qsfp0 iic
+ *   3: port1 mm2s  4: port1 s2mm  5: qsfp1 iic  6: clk iic
+ */
+
+/ {
+	ref_si5328: ref_si5328 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <114285000>;
+	};
+};
+
+/* Si5328 jitter-attenuating clock generator on the shared clk_i2c bus.
+ * Programming it brings up GBTCLK0 (156.25 MHz, QSFP port 0 GT refclk) and
+ * GBTCLK1 (QSFP port 1 GT refclk). */
+&axi_iic_clk {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	fmc_si5328: clock-generator@68 {
+		status = "okay";
+		compatible = "silabs,si5328";
+		reg = <0x68>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		#clock-cells = <1>;
+		clocks = <&ref_si5328>;
+		clock-names = "xtal";
+
+		fmc_si5328_clk: clk0@0 {
+			reg = <0>;
+			clock-frequency = <156250000>; /* 156.25 MHz - 40GBASE-R4 GT refclk */
+		};
+	};
+};
+
+&qsfp_port0_leth {
+	compatible = "xlnx,l-ethernet-4.0";
+	axistream-connected = <&qsfp_port0_axi_mcdma>;
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&gic>;
+	interrupts = <0 89 4>, <0 90 4>;
+	local-mac-address = [00 0a 35 00 00 00];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x28>;
+	max-speed = <40000>;
+};
+/* Keep the standalone xilinx_dma dmaengine driver off the MCDMA (axienet
+ * ioremaps and drives it itself - see bsp.cfg). */
+&qsfp_port0_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};
+
+&qsfp_port1_leth {
+	compatible = "xlnx,l-ethernet-4.0";
+	axistream-connected = <&qsfp_port1_axi_mcdma>;
+	interrupt-names = "mm2s_ch1_introut", "s2mm_ch1_introut";
+	interrupt-parent = <&gic>;
+	interrupts = <0 92 4>, <0 93 4>;
+	local-mac-address = [00 0a 35 00 00 01];
+	xlnx,channel-ids = "1";
+	xlnx,num-queues = /bits/ 16 <0x1>;
+	xlnx,addrwidth = <0x28>;
+	max-speed = <40000>;
+};
+/* Keep the standalone xilinx_dma dmaengine driver off the MCDMA (axienet
+ * ioremaps and drives it itself - see bsp.cfg). */
+&qsfp_port1_axi_mcdma {
+	compatible = "xlnx,eth-dma";
+};

@@ -14,12 +14,23 @@ git clone https://github.com/fpgadeveloper/2x-qsfp28-fmc.git
 
 ## License requirements
 
-The design uses the Versal Integrated MRMAC, which requires a (free, no-cost) license to generate
-a bitstream. The license can be obtained from the AMD Xilinx Licensing site. The VCK190 target
-also requires the Vivado *Enterprise* Edition (a 30-day evaluation license is available from the
-AMD Xilinx Licensing site).
+Every target design uses one of three AMD Ethernet MAC IPs, and all three require a license
+to generate a bitstream — but they are licensed differently. The two hardened 100G MACs have
+**no-cost** licenses that just need to be added to your account on the
+[AMD licensing site](https://www.xilinx.com/getlicense), while the soft 40G/50G MAC used by
+the 40G designs is a **purchased** core, with a 30-day evaluation license available for
+testing:
 
-Additionally, some designs use IP cores that are licensed separately from the Vivado edition itself (for example: TEMAC, XXV Ethernet, HDMI). The **IP License** column in the tables below indicates the designs that require such a license to generate a bitstream; evaluation licenses are generally available from AMD for testing.
+| Ethernet MAC IP | License | Required by targets |
+|-----------------|---------|---------------------|
+| [Integrated 100G Multirate Ethernet MAC (MRMAC)](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html) | No cost | `vck190_fmcp1` |
+| [UltraScale+ Integrated 100G Ethernet (CMAC)](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/cmac_usplus.html) | No cost | `zcu111`, `zcu208`, `zcu216`, `kcu116` |
+| [40G/50G Ethernet Subsystem](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/ef-di-50gemac.html) | Purchase (30-day evaluation available) | `zcu102_hpc0`, `zcu106_hpc0`, `zcu111_ss`, `zcu208_ss`, `zcu216_ss`, `kcu116_ss` |
+
+Separately from the IP licenses, some target boards require the Vivado *Enterprise* Edition
+(a 30-day evaluation license is available from the AMD licensing site) — the **Vivado
+Edition** column in the tables below shows which. The **IP License** column indicates the
+designs that need a separately-licensed IP core to generate a bitstream.
 
 
 ## Target designs
@@ -28,14 +39,16 @@ This repo contains one or more designs that target the supported development boa
 FMC connectors. The table below lists the target design name, the QSFP28 ports supported by the
 design and the FMC connector on which to connect the mezzanine card.
 
-{% for linkspeed in ["100"] %}
+{% for linkspeed in ["100", "40"] %}
 ### {{ linkspeed }}G designs
 
-These designs drive each QSFP28 port as a single {{ linkspeed }}GbE (CAUI-4) channel.
+{% if linkspeed == "100" %}These designs drive each QSFP28 port as a single 100GbE (CAUI-4) channel, with the
+Versal MRMAC (VCK190) or the UltraScale+ CMAC (all other boards).{% else %}These designs drive each QSFP28 port as a single 40GbE (40GBASE-R4) channel with the
+40G/50G Ethernet Subsystem.{% endif %}
 
-| Target board        | Target design     | Ports   | FMC Slot    | Vivado<br> Edition | IP<br>License |
-|---------------------|-------------------|---------|-------------|-----|-----|
-{% for design in data.designs %}{% if design.linkspeed == linkspeed and design.publish %}| [{{ design.board }}]({{ design.link }}) | `{{ design.label }}` | {{ design.lanes | length }}x | {{ design.connector }} | {{ "Enterprise" if design.license else "Standard 🆓" }} | {{ "Required" if design.ip_license else "-" }} |
+| Target board        | Target design     | Ports   | FMC Slot    | Standalone | PetaLinux | Yocto | Vivado<br> Edition | IP<br>License |
+|---------------------|-------------------|---------|-------------|-----|-----|-----|-----|-----|
+{% for design in data.designs %}{% if design.linkspeed == linkspeed and design.publish %}| [{{ design.board }}]({{ design.link }}) | `{{ design.label }}` | {{ design.lanes | length }}x | {{ design.connector }} | {{ "✅" if design.baremetal else "-" }} | {{ "✅" if design.petalinux else "-" }} | {{ "✅" if design.yocto else "-" }} | {{ "Enterprise" if design.license else "Standard 🆓" }} | {{ "Required" if design.ip_license else "-" }} |
 {% endif %}{% endfor %}
 {% endfor %}
 
@@ -45,8 +58,10 @@ Notes:
    Edition, the FREE edition which can be used without a license. Vivado *Enterprise* Edition
    requires a license, however a 30-day evaluation license is available from the AMD Xilinx
    Licensing site.
-2. Regardless of the Vivado Edition, the Versal Integrated MRMAC requires a (free) license to
-   generate a bitstream.
+2. Regardless of the Vivado Edition, every design needs a license for its Ethernet MAC IP to
+   generate a bitstream: a no-cost license for the MRMAC and the CMAC (100G designs), a
+   purchased or 30-day evaluation license for the 40G/50G Ethernet Subsystem (40G designs).
+3. The MicroBlaze-based KCU116 targets are supported with the standalone application only.
 
 ## Cross-platform build runner
 
@@ -72,7 +87,7 @@ To see the available targets and the state of a build:
 ```
 
 ```{note}
-The embedded Linux images (PetaLinux) can only be built on a
+The embedded Linux images (PetaLinux and Yocto) can only be built on a
 native Linux machine; everything else builds on Windows too. On Windows, the
 runner refuses the Linux-only stages up front and prints the exact command
 to run on the Linux machine. For Versal targets on Windows, the runner also
@@ -104,6 +119,24 @@ bitstream — for example, to explore or modify the design in the Vivado GUI —
 run `./build.sh project --target <target>` instead, then open the project
 from `Vivado/<target>/`.
 
+### Build Vitis workspace
+
+This creates the Vitis workspace and compiles the bare-metal
+[echo server](echo_server), producing the boot file — a `BOOT.BIN` for the
+Zynq UltraScale+ and Versal targets, or a `qsfp_boot.bit` (bitstream with
+the ELF embedded) for the MicroBlaze targets. The Vivado XSA is built first
+if it does not already exist:
+
+```
+./build.sh standalone --target <target>
+```
+
+Valid targets for the standalone application are:
+{% for design in data.designs if design.baremetal and design.publish %} `{{ design.label }}`{{ ", " if not loop.last else "." }} {% endfor %}
+
+The workspace is created in `Vitis/<target>_workspace` and the boot files
+are gathered in `Vitis/boot/<target>/`.
+
 ### Build PetaLinux
 
 The PetaLinux build requires a native Linux machine (one of the [supported
@@ -126,10 +159,9 @@ If you need to build the PetaLinux projects offline (without an internet
 connection), you can follow these instructions.
 
 1. Download the sstate-cache artefacts from the Xilinx downloads site (the
-   same page where you downloaded PetaLinux tools). There are four of them:
+   same page where you downloaded PetaLinux tools):
    * aarch64 sstate-cache (for ZynqMP designs)
    * arm sstate-cache (for Zynq designs)
-   * microblaze sstate-cache (for Microblaze designs)
    * Downloads (for all designs)
 2. Extract the contents of those files to a single location on your hard
    drive, for this example we'll say `/home/user/petalinux-sstate`. That
@@ -153,10 +185,59 @@ connection), you can follow these instructions.
 
 The PetaLinux builds will then be configured for offline build.
 
+### Build Yocto
+
+This builds the Yocto / EDF image (AMD's Embedded Development Framework,
+the announced successor to PetaLinux) using AMD's recommended
+`gen-machineconf` / `parse-sdt` flow. It requires a native Linux machine
+with [Google's `repo` tool](https://gerrit.googlesource.com/git-repo/) on
+the `PATH`; the `xsct`/`sdtgen` tools come from Vitis, which the runner
+locates and sources itself. The Vivado XSA is built first if it does not
+already exist:
+
+```
+./build.sh yocto --target <target>
+```
+
+Valid targets for Yocto are:
+{% for design in data.designs if design.yocto and design.publish %} `{{ design.label }}`{{ ", " if not loop.last else "." }} {% endfor %}
+
+The first build of a target runs `repo sync` (several GB of git history)
+and bitbake from scratch, so it takes a while; subsequent builds are
+incremental. The output products (`BOOT.BIN`, the kernel, `boot.scr`,
+`system.dtb`, `rootfs.wic.xz`) are gathered into
+`Yocto/<target>/images/linux/`.
+
+#### Yocto offline build
+
+To build the Yocto projects offline (or simply faster), point the build at
+a locally extracted AMD sstate-cache mirror.
+
+1. Download the sstate-cache artefacts from the Xilinx downloads site and
+   extract them to a single location, for example `/home/user/yocto-sstate`,
+   leaving the following directory structure:
+   ```
+   /home/user/yocto-sstate
+                          +---  aarch64       (Zynq UltraScale+ and Versal)
+                          +---  arm           (Zynq-7000)
+                          +---  microblaze    (PMU/PLM firmware)
+                          +---  downloads
+   ```
+2. Create a text file called `offline.txt` in the `Yocto` directory of the
+   repository containing a single line with that path, written with NO
+   TRAILING FORWARD SLASH:
+   ```
+   /home/user/yocto-sstate
+   ```
+
+The Yocto build will then auto-detect which architecture sub-directories
+are present and configure the build to use the mirror.
+
 ### Build everything
 
-This builds everything that the target supports — the Vivado project and XSA
-and the PetaLinux image — and gathers the boot images into `bootimages/*.zip`:
+This builds everything that the target supports — the Vivado project and XSA,
+the standalone application, the PetaLinux image and the Yocto image — and
+gathers the boot images into `bootimages/*.zip`:
 
 ```
 ./build.sh all --target <target>
@@ -165,5 +246,21 @@ and the PetaLinux image — and gathers the boot images into `bootimages/*.zip`:
 
 On Windows, `all` builds everything that the host can build and reports the
 Linux-only stages as `BLOCKED` rather than failing.
+
+To gather the boot images of stages you built one by one, run
+`./build.sh package --target <target>`. A zip is rewritten whenever the artifacts it
+gathers are newer than the zip, so a rebuilt image always ends up in `bootimages/`.
+
+## Output products
+
+| Flow | Built files | Boot image zip in `bootimages/` | Zip contents |
+|------|-------------|---------------------------------|--------------|
+| Vivado | `Vivado/<target>/qsfp_wrapper.xsa`, bitstream / device image | — | — |
+| Standalone | `Vitis/boot/<target>/` | `2x-qsfp28-fmc_<target>_standalone-2025-2.zip` | `BOOT.BIN` + `.bif` (Zynq UltraScale+ and Versal), `qsfp_boot.bit` (KCU116) |
+| PetaLinux | `PetaLinux/<target>/images/linux/` | `2x-qsfp28-fmc_<target>_petalinux-2025-2.zip` | `boot/` (`BOOT.BIN`, `image.ub`, `boot.scr`), `root/rootfs.tar.gz` |
+| Yocto | `Yocto/<target>/images/linux/` | `2x-qsfp28-fmc_<target>_yocto-2025-2.zip` | `rootfs.wic.xz`, `rootfs.wic.bmap`, `BOOT.BIN`, `BOOTAA64.EFI` (Versal only), `readme.txt` |
+
+How to put these on an SD card and boot them is described in the
+[echo server](echo_server), [PetaLinux](petalinux) and [Yocto](yocto) pages.
 
 [supported Linux distributions]: https://docs.amd.com/r/en-US/ug1144-petalinux-tools-reference-guide/Setting-Up-Your-Environment

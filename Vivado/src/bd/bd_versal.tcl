@@ -729,16 +729,24 @@ proc create_qsfp_port {label} {
   #########################################################
   # GT control GPIO (lets the Linux axienet driver reset the GT and read
   # reset-done). Dual-channel AXI GPIO -> ONE Linux gpiochip:
-  #   Channel 1 (5 outputs): bit0=gt_reset_all, bit1=gt_reset_tx_datapath,
-  #                          bit2=gt_reset_rx_datapath, bits3-4=gt-ctrl-rate (spare)
-  #   Channel 2 (2 inputs):  bit0=gt_tx_reset_done, bit1=gt_rx_reset_done
+  #   Channel 1 (5 outputs):  bit0=gt_reset_all, bit1=gt_reset_tx_datapath,
+  #                           bit2=gt_reset_rx_datapath, bits3-4=gt-ctrl-rate (spare)
+  #   Channel 2 (32 inputs):  bit0=gt_tx_reset_done, bit1=gt_rx_reset_done,
+  #                           bits[7:2]  = RX frames dropped because the MAC
+  #                                        flagged them bad (6-bit, wraps)
+  #                           bits[31:8] = RX frames dropped because the RX
+  #                                        frame FIFO was full (24-bit, wraps)
+  #   (drop counters from the RX adapter's frame FIFO; read GPIO2_DATA at
+  #   offset 0x8 of this GPIO. The Linux gpio line numbers of the two
+  #   reset-done bits are unchanged: channel 2 lines start after the 5
+  #   channel-1 lines.)
   #########################################################
   create_bd_cell -type ip -vlnv xilinx.com:ip:axi_gpio axi_gpio_gt$label
   set_property -dict [list \
     CONFIG.C_GPIO_WIDTH {5} \
     CONFIG.C_ALL_OUTPUTS {1} \
     CONFIG.C_IS_DUAL {1} \
-    CONFIG.C_GPIO2_WIDTH {2} \
+    CONFIG.C_GPIO2_WIDTH {32} \
     CONFIG.C_ALL_INPUTS_2 {1} \
   ] [get_bd_cells axi_gpio_gt$label]
   connect_bd_net [get_bd_pins sys_clk] [get_bd_pins axi_gpio_gt$label/s_axi_aclk]
@@ -770,9 +778,10 @@ proc create_qsfp_port {label} {
   }
 
   # Channel 2 inputs <- mrmac GT reset-done outputs (each 4-bit, one per bonded
-  # lane). Take lane-0's done bit from each and concat into the 2-bit gpio2_io_i:
-  #   gpio2 bit0 = gt_tx_reset_done_out[0]
-  #   gpio2 bit1 = gt_rx_reset_done_out[0]
+  # lane) + the RX drop counters. Take lane-0's done bit from each:
+  #   gpio2 bit0      = gt_tx_reset_done_out[0]
+  #   gpio2 bit1      = gt_rx_reset_done_out[0]
+  #   gpio2 bits 31:2 = rx_axis_adapter/rx_drop_status (In2, wired below)
   # These outputs already drive logic_tx_reset/logic_rx_reset; the extra slices
   # are just additional loads on the same nets (existing conns left intact).
   create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilslice:1.0 slice_gt_tx_done$label
@@ -782,7 +791,7 @@ proc create_qsfp_port {label} {
   set_property -dict [list CONFIG.DIN_WIDTH {4} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0} CONFIG.DOUT_WIDTH {1}] [get_bd_cells slice_gt_rx_done$label]
   connect_bd_net [get_bd_pins mrmac/gt_rx_reset_done_out] [get_bd_pins slice_gt_rx_done$label/Din]
   create_bd_cell -type inline_hdl -vlnv xilinx.com:inline_hdl:ilconcat:1.0 gt_rst_done_cat$label
-  set_property CONFIG.NUM_PORTS {2} [get_bd_cells gt_rst_done_cat$label]
+  set_property -dict [list CONFIG.NUM_PORTS {3} CONFIG.IN2_WIDTH {30}] [get_bd_cells gt_rst_done_cat$label]
   connect_bd_net [get_bd_pins slice_gt_tx_done$label/Dout] [get_bd_pins gt_rst_done_cat$label/In0]
   connect_bd_net [get_bd_pins slice_gt_rx_done$label/Dout] [get_bd_pins gt_rst_done_cat$label/In1]
   connect_bd_net [get_bd_pins gt_rst_done_cat$label/dout] [get_bd_pins axi_gpio_gt$label/gpio2_io_i]
@@ -849,8 +858,25 @@ proc create_qsfp_port {label} {
   # the converter assert TLAST every beat (each 384b beat became one packet ->
   # frames fragmented into ~48-byte pieces). The adapter packs the six lanes
   # into one 384b word and passes the single per-frame TLAST through.
+  # The MRMAC RX client has NO backpressure, and the S2MM path behind it
+  # (512b x 100 MHz = 51.2 Gb/s) is slower than the 100G line, so the adapter
+  # contains a store-and-forward frame FIFO (axis_clk domain) that absorbs
+  # line-rate bursts and downstream stalls (CDC FIFO / MCDMA S2MM / NoC /
+  # descriptor starvation) and, when it overflows, drops frames WHOLE - never
+  # truncated or merged. Frames the MAC flags as errored are dropped too.
+  # FIFO_DEPTH 2048 x 48 B = 96 KB (~26 RAMB36 per port): a 64 KB TSO burst at
+  # 100G only half-drains at 51.2 Gb/s, so 96 KB holds one such burst plus
+  # ~7 us of S2MM stall. Its drop counters are read through GPIO channel 2 of
+  # axi_gpio_gt$label (see above).
   create_bd_cell -type module -reference mrmac_rx_axis_adapter rx_axis_adapter
+  set_property -dict [list \
+    CONFIG.FIFO_DEPTH {2048} \
+    CONFIG.DROP_ERR_FRAMES {1} \
+  ] [get_bd_cells rx_axis_adapter]
   connect_bd_net [get_bd_pins axis_clk] [get_bd_pins rx_axis_adapter/aclk]
+  connect_bd_net [get_bd_pins axis_rstn] [get_bd_pins rx_axis_adapter/aresetn]
+  connect_bd_net [get_bd_pins sys_clk] [get_bd_pins rx_axis_adapter/sys_clk]
+  connect_bd_net [get_bd_pins rx_axis_adapter/rx_drop_status] [get_bd_pins gt_rst_done_cat$label/In2]
   foreach ln {0 1 2 3 4 5} {
     connect_bd_net [get_bd_pins mrmac/rx_axis_tdata$ln]      [get_bd_pins rx_axis_adapter/rx_axis_tdata$ln]
     connect_bd_net [get_bd_pins mrmac/rx_axis_tkeep_user$ln] [get_bd_pins rx_axis_adapter/rx_axis_tkeep_user$ln]

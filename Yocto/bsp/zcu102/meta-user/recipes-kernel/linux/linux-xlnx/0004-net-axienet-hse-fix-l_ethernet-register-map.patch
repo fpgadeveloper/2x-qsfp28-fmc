@@ -1,0 +1,108 @@
+From: Opsero Electronic Design Inc. <support@opsero.com>
+Subject: [PATCH] net: axienet: fix HSE register map for the 40G/50G subsystem
+
+The HSE support patch used the 100G CMAC (PG203) offsets for the
+statistics tick (0x2B0) and RX status (0x204) on both HSE compatibles.
+The 40G/50G High Speed Ethernet Subsystem (l_ethernet, PG211) has a
+different map - TICK_REG at 0x0020 and STAT_RX_STATUS_REG1 at 0x0404 -
+and its AXI4-Lite decoder answers undefined offsets with SLVERR, with
+the SLVERR-indication enables SET after reset (MODE_REG[1:0]).
+
+On ZynqMP the posted write to 0x2B0 therefore came back as an
+asynchronous SError and panicked the kernel at the first ifup
+(observed on zcu106_hpc0, delivered in queue_delayed_work_on right
+after the write):
+
+  SError Interrupt on CPU1, code 0x00000000bf000002 -- SError
+  pc : queue_delayed_work_on+0x70/0xbc
+  lr : axienet_open+0xe2c/0x1404
+
+Fix by keying the tick/status offsets off the compatible (new
+lp->hse_leth flag), and by clearing MODE_REG's SLVERR-indication bits
+at ifup on l_ethernet: STAT reads handshake into the GT rx-clock
+domain, so a read racing GT bring-up times out inside the core and
+would otherwise also be signalled as a (fatal) bus error; with the
+enables cleared it returns the 0xBADBAD00 marker, which the link poll
+simply treats as link-down. Register map verified against the
+generated l_ethernet AXI4-Lite RTL (qsfp_leth_0_axi4_lite_if_wrapper.v)
+of the zcu106_hpc0 Vivado project.
+---
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet.h	2026-07-06 11:30:49.422028121 -0400
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet.h	2026-07-06 11:30:49.461027665 -0400
+@@ -485,8 +485,17 @@
+  * positions); RX status and the statistics tick live at HSE-specific
+  * offsets below.
+  */
+-#define HSE_STAT_RX_STATUS_OFFSET	0x00000204
+-#define HSE_TICK_OFFSET			0x000002B0
++/* 100G CMAC (PG203) */
++#define HSE_CMAC_STAT_RX_STATUS_OFFSET	0x00000204
++#define HSE_CMAC_TICK_OFFSET		0x000002B0
++/* 40G/50G High Speed Ethernet Subsystem (PG211): different offsets, and its
++ * MODE_REG carries the SLVERR-indication enables (reset to on) that must be
++ * cleared so status/statistics reads that race the GT clock bring-up return
++ * the 0xBADBAD00 timeout marker instead of a fatal bus error.
++ */
++#define HSE_LETH_MODE_OFFSET		0x00000008
++#define HSE_LETH_TICK_OFFSET		0x00000020
++#define HSE_LETH_STAT_RX_STATUS_OFFSET	0x00000404
+ 
+ #define HSE_RX_STATUS_MASK	BIT(0)	/* stat_rx_status */
+ #define HSE_RX_ALIGNED_MASK	BIT(1)	/* stat_rx_aligned */
+@@ -1087,6 +1096,7 @@
+ 	struct mutex stats_lock;
+ 	struct delayed_work stats_work;
+ 	struct delayed_work hse_link_work;
++	bool hse_leth;
+ 	bool reset_in_progress;
+ 
+ 	bool stopping;
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c	2026-07-06 11:30:49.424028097 -0400
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c	2026-07-06 11:30:49.464027630 -0400
+@@ -1093,7 +1093,8 @@
+ 	bool link_up;
+ 	u32 val;
+ 
+-	val = axienet_ior(lp, HSE_STAT_RX_STATUS_OFFSET);
++	val = axienet_ior(lp, lp->hse_leth ? HSE_LETH_STAT_RX_STATUS_OFFSET
++					   : HSE_CMAC_STAT_RX_STATUS_OFFSET);
+ 	link_up = (val & HSE_RX_STATUS_MASK) && (val & HSE_RX_ALIGNED_MASK);
+ 
+ 	if (link_up && !netif_carrier_ok(ndev)) {
+@@ -3144,7 +3145,20 @@
+ 		 * alignment (see axienet_hse_link_poll).
+ 		 */
+ 		netif_carrier_off(ndev);
+-		axienet_iow(lp, HSE_TICK_OFFSET, HSE_TICK_TRIGGER);
++		if (lp->hse_leth) {
++			/* Clear the SLVERR-indication enables (on after
++			 * reset): while the GT user clocks are still coming
++			 * up, status/statistics reads time out inside the
++			 * core and would otherwise be signalled as AXI
++			 * SLVERR, which the CPU takes as a fatal bus abort.
++			 */
++			axienet_iow(lp, HSE_LETH_MODE_OFFSET, 0);
++			axienet_iow(lp, HSE_LETH_TICK_OFFSET,
++				    HSE_TICK_TRIGGER);
++		} else {
++			axienet_iow(lp, HSE_CMAC_TICK_OFFSET,
++				    HSE_TICK_TRIGGER);
++		}
+ 		schedule_delayed_work(&lp->hse_link_work, 0);
+ 	}
+ 
+@@ -5240,6 +5254,14 @@
+ 		}
+ 	}
+ 
++	/* The two HSE cores share the GT_RESET/RESET/CONFIGURATION register
++	 * template but differ beyond it: the 40G/50G subsystem (l_ethernet,
++	 * PG211) keeps TICK at 0x20 and RX status at 0x404; the 100G CMAC
++	 * (PG203) uses 0x2B0 and 0x204.
++	 */
++	lp->hse_leth = of_device_is_compatible(pdev->dev.of_node,
++					       "xlnx,l-ethernet-4.0");
++
+ 	/* Setup checksum offload, but default to off if not specified */
+ 	lp->features = 0;
+ #ifndef CONFIG_AXIENET_HAS_MCDMA

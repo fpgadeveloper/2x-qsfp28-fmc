@@ -1,18 +1,31 @@
-# 100G Ethernet Reference Design for the Opsero 2x QSFP28 FMC
+# 100G/40G Ethernet Reference Designs for the Opsero 2x QSFP28 FMC
 
 ## Description
 
-This project demonstrates the use of the Opsero [2x QSFP28 FMC] (OP120) with 100G QSFP28 modules
-on AMD Versal adaptive SoC development boards. Each QSFP28 port is driven by the Versal
-[Integrated 100G Multirate Ethernet MAC (MRMAC)] configured for a single 100GbE (CAUI-4) channel,
-with packet data moved to/from DDR by an AXI MCDMA and driven under PetaLinux by the AXI Ethernet
-driver.
+This project demonstrates the use of the Opsero [2x QSFP28 FMC] (OP120) with QSFP28 modules on
+AMD Versal, Zynq UltraScale+ and Kintex UltraScale+ development boards. Each QSFP28 port carries
+a single Ethernet channel over its four bonded transceiver lanes, at a line rate set by the
+target board's transceivers:
+
+* **100G (CAUI-4)** on the GTY-based boards, driven by a hardened 100G MAC — the
+  [Integrated 100G Multirate Ethernet MAC (MRMAC)] on the Versal VCK190, or the
+  [UltraScale+ Integrated 100G Ethernet (CMAC)] on the RFSoC boards (ZCU111/ZCU208/ZCU216)
+  and the Kintex UltraScale+ KCU116.
+* **40G (40GBASE-R4)** on the GTH-based ZCU102 and ZCU106, driven by the soft
+  [40G/50G Ethernet Subsystem] MAC/PCS — also available as alternative `_ss` targets of
+  the GTY boards.
+
+In every design, packet data is moved to/from DDR by an AXI MCDMA; the ports are driven under
+Linux (PetaLinux or Yocto) by the AXI Ethernet driver, or bare-metal by the included
+echo-server application. The KCU116 has no processing system, so it gets a MicroBlaze soft
+processor in front of the same datapath and is supported with the **standalone application
+only** (neither Linux flow supports MicroBlaze going forward).
 
 ![2x QSFP28 FMC with VCK190](docs/source/images/vck190-with-2x-qsfp28-fmc_03.jpg "2x QSFP28 FMC with VCK190")
 
 Important links:
 
-* The user guide for these reference designs is hosted here: [100G Ethernet for 2x QSFP28 FMC docs](https://qsfp28.ethernetfmc.com "100G Ethernet for 2x QSFP28 FMC docs")
+* The user guide for these reference designs is hosted here: [2x QSFP28 FMC reference designs docs](https://qsfp28.ethernetfmc.com "2x QSFP28 FMC reference designs docs")
 * To report a bug: [Report an issue](https://github.com/fpgadeveloper/2x-qsfp28-fmc/issues "Report an issue").
 * For technical support: [Contact Opsero](https://opsero.com/contact-us "Contact Opsero").
 * To purchase the mezzanine card: [2x QSFP28 FMC order page](https://opsero.com/product/2x-qsfp28-fmc "2x QSFP28 FMC order page").
@@ -27,10 +40,27 @@ to find the version of this repository that matches your version of the tools.
 In order to test this design on hardware, you will need the following:
 
 * Vivado 2025.2
+* Vitis 2025.2
 * PetaLinux Tools 2025.2
 * [2x QSFP28 FMC]
 * One of the target platforms listed below
-* [AMD Versal Integrated MRMAC License](https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html)
+* A license for the Ethernet MAC IP used by your target (see
+  [Ethernet IP licensing](#ethernet-ip-licensing) below)
+
+### Ethernet IP licensing
+
+Every target design uses one of three AMD Ethernet MAC IPs, and all three require a license
+to generate a bitstream — but they are licensed differently. The two hardened 100G MACs have
+**no-cost** licenses that just need to be added to your account on the
+[AMD licensing site](https://www.xilinx.com/getlicense), while the soft 40G/50G MAC used by
+the 40G designs is a **purchased** core, with a 30-day evaluation license available for
+testing:
+
+| Ethernet MAC IP | License | Required by targets |
+|-----------------|---------|---------------------|
+| [Integrated 100G Multirate Ethernet MAC (MRMAC)] | No cost | `vck190_fmcp1` |
+| [UltraScale+ Integrated 100G Ethernet (CMAC)] | No cost | `zcu111`, `zcu208`, `zcu216`, `kcu116` |
+| [40G/50G Ethernet Subsystem] | Purchase (30-day evaluation available) | `zcu102_hpc0`, `zcu106_hpc0`, `zcu111_ss`, `zcu208_ss`, `zcu216_ss`, `kcu116_ss` |
 
 ## Target designs
 
@@ -39,12 +69,33 @@ FMC connectors. The table below lists the target design name, the QSFP28 ports s
 the FMC connector on which to connect the 2x QSFP28 FMC.
 
 <!-- updater start -->
+### 40G designs
+
+| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | PetaLinux | Vivado<br> Edition | IP<br>License |
+|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|-------|
+| [ZCU102]              | `zcu102_hpc0`      | 40G        | 2x          | HPC0        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU106]              | `zcu106_hpc0`      | 40G        | 2x          | HPC0        | :white_check_mark: | :white_check_mark: | Standard :free: | Required |
+| [ZCU111]              | `zcu111_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU208]              | `zcu208_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU216]              | `zcu216_ss`        | 40G        | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [KCU116]              | `kcu116_ss`        | 40G        | 1x          | HPC         | :x:   | :x:   | Standard :free: | Required |
+
 ### 100G designs
 
-| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition | IP<br>License |
-|-----------------------|--------------------|------------|-------------|-------------|-------|-------|
-| [VCK190]              | `vck190_fmcp1`     | 100G       | 2x          | FMCP1       | Enterprise | Required |
+| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | PetaLinux | Vivado<br> Edition | IP<br>License |
+|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|-------|
+| [VCK190]              | `vck190_fmcp1`     | 100G       | 2x          | FMCP1       | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU111]              | `zcu111`           | 100G       | 2x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU208]              | `zcu208`           | 100G       | 1x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [ZCU216]              | `zcu216`           | 100G       | 1x          | FMCP        | :white_check_mark: | :white_check_mark: | Enterprise | Required |
+| [KCU116]              | `kcu116`           | 100G       | 1x          | HPC         | :x:   | :x:   | Standard :free: | Required |
 
+[ZCU102]: https://www.xilinx.com/zcu102
+[ZCU106]: https://www.xilinx.com/zcu106
+[ZCU111]: https://www.xilinx.com/zcu111
+[ZCU208]: https://www.xilinx.com/zcu208
+[ZCU216]: https://www.xilinx.com/zcu216
+[KCU116]: https://www.xilinx.com/kcu116
 [VCK190]: https://www.xilinx.com/vck190
 <!-- updater end -->
 
@@ -52,17 +103,52 @@ Notes:
 1. The Vivado Edition column indicates which designs are supported by the Vivado *Standard* Edition, the
    FREE edition which can be used without a license. Vivado *Enterprise* Edition requires
    a license however a 30-day evaluation license is available from the AMD Xilinx Licensing site.
-2. The Versal Integrated MRMAC requires a (free) license to generate a bitstream.
+2. All of the designs use an Ethernet MAC IP that requires a license to generate a bitstream
+   (see [Ethernet IP licensing](#ethernet-ip-licensing)): the 100G designs use a hardened MAC
+   with a no-cost license (MRMAC on the VCK190, CMAC on all others), while the 40G designs use
+   the 40G/50G Ethernet Subsystem, a purchased core with a 30-day evaluation license available.
 
 ## Software
 
-These reference designs can be driven within a PetaLinux environment.
-The repository includes all necessary scripts and code to build the PetaLinux environments. The table
-below outlines the corresponding applications available in each environment:
+These reference designs can be driven by a **standalone** (bare-metal) application or
+from within an embedded **Linux** environment. The repository includes all the scripts
+and code needed to build either one.
 
-| Environment      | Available Applications  |
-|------------------|-------------------------|
-| PetaLinux        | Built-in Linux commands<br>Additional tools: ethtool, iperf3 |
+For Linux, two build flows are provided, both based on AMD's 2025.2 tools:
+
+* **PetaLinux** — AMD's long-standing embedded Linux build tool (see the `PetaLinux/`
+  directory).
+* **Yocto / EDF** — AMD's Embedded Development Framework, the announced successor to
+  PetaLinux, built with the `gen-machineconf parse-sdt` flow (see the `Yocto/`
+  directory).
+
+> [!IMPORTANT]
+> **The PetaLinux flow is being retired for this repository.** Version 2025.2 is the
+> last tool release for which we will support PetaLinux; from the next tool version
+> onward, Linux images will be built with the Yocto / EDF flow only. New work should
+> use the Yocto flow.
+
+For 2025.2, both flows produce an equivalent Linux image with the same applications,
+so you can pick whichever fits your workflow. The [target design tables](#target-designs)
+show which boards are supported by each flow. The MicroBlaze-based KCU116 targets have no
+Linux flow — they are supported with the standalone application only. (Their unsupported
+classic-MicroBlaze PetaLinux BSP remains in `PetaLinux/bsp/kcu116/` for reference.)
+
+| Environment | Build flow          | Available applications |
+|-------------|---------------------|------------------------|
+| Standalone  | Vitis               | Raw-Ethernet echo server (ARP, ICMP ping, UDP echo on all QSFP28 ports) |
+| Linux       | PetaLinux  /  Yocto | Built-in Linux commands<br>Additional tools: ethtool, iperf3, iproute2, i2c-tools, phytool<br>Bundled self-test: `qsfp-loopback-test` |
+
+The standalone echo server brings up the QSFP28 ports and answers ARP, ICMP ping and
+UDP echo on each of them, with no operating system involved. Under Linux, the same
+ports come up as standard network interfaces driven by the AXI Ethernet driver, which
+you can configure and test with the bundled tools.
+
+The Linux images are ready to test: log in as `amd-edf` (Yocto) or `petalinux`
+(PetaLinux) and set a password at the first login, connect a QSFP28 cable between the
+two ports (or fit loopback modules) and run `sudo qsfp-loopback-test`. The link partner
+of a QSFP28 port must have FEC turned off. The [user guide](https://qsfp28.ethernetfmc.com)
+describes how to build, boot and test every target.
 
 ## Build instructions
 
@@ -96,10 +182,27 @@ source the tool settings yourself before running the build.
 ./build.sh xsa --target <target>
 ```
 
+#### Build the standalone application
+
+Builds the Vitis workspace and the baremetal boot file (`BOOT.BIN`, or a
+`qsfp_boot.bit` with the ELF embedded for the MicroBlaze targets):
+
+```
+./build.sh standalone --target <target>
+```
+
 #### Build PetaLinux (Linux only)
 
 ```
 ./build.sh petalinux --target <target>
+```
+
+#### Build Yocto (Linux only)
+
+Requires Vitis 2025.2 (for `xsct`/`sdtgen`) and Google's `repo` tool on the `PATH`:
+
+```
+./build.sh yocto --target <target>
 ```
 
 #### Build everything
@@ -137,3 +240,5 @@ updates on the awesome projects we work on.
 
 [2x QSFP28 FMC]: https://docs.opsero.com/op120/datasheet/overview/
 [Integrated 100G Multirate Ethernet MAC (MRMAC)]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/mrmac.html
+[UltraScale+ Integrated 100G Ethernet (CMAC)]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/cmac_usplus.html
+[40G/50G Ethernet Subsystem]: https://www.amd.com/en/products/adaptive-socs-and-fpgas/intellectual-property/ef-di-50gemac.html

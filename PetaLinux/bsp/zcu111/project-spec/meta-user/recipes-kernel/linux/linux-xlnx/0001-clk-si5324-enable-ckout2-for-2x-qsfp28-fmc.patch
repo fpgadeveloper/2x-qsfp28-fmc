@@ -1,0 +1,62 @@
+From: Opsero <support@opsero.com>
+Date: Thu, 4 Jun 2026 00:00:00 +0000
+Subject: [PATCH] clk: si5324: enable CKOUT2 for 2x QSFP28 FMC port 1
+
+The 2x QSFP28 FMC uses both Si5328 outputs: CKOUT1 -> GBTCLK0 (QSFP
+port 0) and CKOUT2 -> GBTCLK1 (QSFP port 1). The stock driver enables
+only CKOUT1 and disables CKOUT2, so port 1 has no GT reference clock
+("GT TX Reset Done not achieved"). Enable both outputs as LVDS and
+mirror the CKOUT1 output divider (NC1_LS) to CKOUT2 (NC2_LS) so both
+run at the same frequency.
+---
+diff --git a/drivers/clk/clk-si5324.c b/drivers/clk/clk-si5324.c
+index d8494d9563f5..116fd150a495 100644
+--- a/drivers/clk/clk-si5324.c
++++ b/drivers/clk/clk-si5324.c
+@@ -339,15 +339,22 @@ static int si5324_initialize(struct si5324_driver_data *drvdata)
+ 
+ 	si5324_reg_write(drvdata, SI5324_CKSEL, (ret | SI5324_CKSEL_SQL_ICAL));
+ 	si5324_reg_write(drvdata, SI3324_AUTOSEL, SI5324_AUTOSEL_DEF);
+-	si5324_reg_write(drvdata, SI5324_OUTPUT_SIGFMT,
+-			 SI5324_OUTPUT_SF1_DEFAULT);
++	/*
++	 * Opsero 2x QSFP28 FMC: this board uses BOTH Si5328 outputs - CKOUT1 ->
++	 * GBTCLK0 (QSFP port 0) and CKOUT2 -> GBTCLK1 (QSFP port 1). The stock
++	 * driver enables only CKOUT1 and disables CKOUT2, leaving port 1 without a
++	 * GT reference clock. Enable both outputs as LVDS: SFOUT1 stays 0b111
++	 * (LVDS, unchanged from SF1_DEFAULT) and SFOUT2 = 0b111 -> 0x3F.
++	 */
++	si5324_reg_write(drvdata, SI5324_OUTPUT_SIGFMT, 0x3F);
+ 
+ 	ret = si5324_reg_read(drvdata, SI5324_DSBL_CLKOUT);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	/* Keep CKOUT2 enabled (clear, do not set, DSBL_CLKOUT2). */
+ 	si5324_reg_write(drvdata, SI5324_DSBL_CLKOUT,
+-			 (ret | SI5324_DSBL_CLKOUT2));
++			 (ret & ~SI5324_DSBL_CLKOUT2));
+ 	ret = si5324_reg_read(drvdata, SI5324_POWERDOWN);
+ 	if (ret < 0)
+ 		return ret;
+@@ -841,6 +848,20 @@ static int si5324_clkout_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	hwdata->drvdata->params.valid = 0;
+ 	rc = si5324_bulk_scatter_write(hwdata->drvdata, SI5324_OUT_REGS, buf);
+ 
++	/*
++	 * Opsero 2x QSFP28 FMC: mirror the CKOUT1 output divider (NC1_LS) to the
++	 * CKOUT2 output divider (NC2_LS) so the second output (GBTCLK1, QSFP port
++	 * 1) runs at the same frequency as CKOUT1 (GBTCLK0, QSFP port 0). Both
++	 * outputs share N1_HS and the PLL, so an identical low-speed divider gives
++	 * the same frequency. Output dividers do not require re-calibration.
++	 */
++	si5324_reg_write(hwdata->drvdata, SI5324_NC2_LS_H,
++			 (u8)((ncn_ls & 0x000F0000) >> 16));
++	si5324_reg_write(hwdata->drvdata, SI5324_NC2_LS_M,
++			 (u8)((ncn_ls & 0x0000FF00) >> 8));
++	si5324_reg_write(hwdata->drvdata, SI5324_NC2_LS_L,
++			 (u8)(ncn_ls & 0x000000FF));
++
+ 	return rc;
+ }
+ 

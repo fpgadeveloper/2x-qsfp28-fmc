@@ -4008,7 +4008,7 @@ CONFIG_CREATE_NEW_GROUPS="aie;"
 CONFIG_ADD_USERS_TO_GROUPS="petalinux:audio,video,aie,input;"
 CONFIG_ADD_USERS_TO_SUDOERS="petalinux"
 
-# Useful tools for Quad SFP28 FMC
+# Useful tools for 2x QSFP28 FMC
 
 CONFIG_ethtool=y
 CONFIG_ethtool-dev=y

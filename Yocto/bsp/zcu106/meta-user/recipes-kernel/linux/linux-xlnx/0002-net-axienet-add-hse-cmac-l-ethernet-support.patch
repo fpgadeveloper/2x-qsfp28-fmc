@@ -1,0 +1,278 @@
+From: Opsero <support@opsero.com>
+Date: Sat, 4 Jul 2026 00:00:00 +0000
+Subject: [PATCH] net: axienet: add 100G CMAC / 40G-50G l_ethernet (HSE) support
+
+ZynqMP devices have no MRMAC hard block, so the 2x QSFP28 FMC designs for
+them use the UltraScale+ Integrated 100G Ethernet (CMAC, PG203) on RFSoC
+GTYs and the 40G/50G High Speed Ethernet Subsystem (l_ethernet, PG211) on
+GTH boards. Both cores share one AXI4-Lite register template: GT reset and
+TX/RX enable/FCS controls sit at the XXV MAC offsets with the same bit
+positions, while RX status (STAT_RX_STATUS_REG, 0x0204) and the statistics
+tick (TICK_REG, 0x02B0) are HSE-specific.
+
+Add a XAXIENET_HSE mactype that reuses the XXV option table, clock init and
+GT reset, reads the link rate from "max-speed", and skips the PHY/phylink
+paths (there is no PHY, like the MRMAC). Since these cores have no
+link-change interrupt - and the GT reference clock on the 2x QSFP28 FMC
+only starts once Linux programs the FMC's Si5328 - open() brings the
+interface up with carrier off and a 1 Hz monitor drives the netdev carrier
+from RX status/alignment, pulsing the in-core GT reset while the link is
+down so alignment is re-attempted once refclk and partner signal are
+present (same rationale as the MRMAC carrier monitor on the Versal
+targets).
+
+Bound to DT compatibles "xlnx,cmac-usplus-3.1" and "xlnx,l-ethernet-4.0"
+(set explicitly by the design's port-config.dtsi overlay).
+---
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet.h b/drivers/net/ethernet/xilinx/xilinx_axienet.h
+index 054c5a3..19babd6 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet.h
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet.h
+@@ -476,6 +476,22 @@ enum temac_stat {
+ #define XXV_AN_CTL1_OFFSET		0x000000e0
+ #define XXV_USXGMII_AN_OFFSET		0x000000C8
+ #define XXV_USXGMII_AN_STS_OFFSET	0x00000458
++
++/* Register offsets for the UltraScale+ Integrated 100G Ethernet (CMAC,
++ * PG203) and the 40G/50G High Speed Ethernet Subsystem (l_ethernet, PG211).
++ * Both follow the same "high speed ethernet" register template: GT reset,
++ * TX/RX configuration and FCS controls share the XXV offsets
++ * (XXV_GT_RESET_OFFSET / XXV_TC_OFFSET / XXV_RCW1_OFFSET with the same bit
++ * positions); RX status and the statistics tick live at HSE-specific
++ * offsets below.
++ */
++#define HSE_STAT_RX_STATUS_OFFSET	0x00000204
++#define HSE_TICK_OFFSET			0x000002B0
++
++#define HSE_RX_STATUS_MASK	BIT(0)	/* stat_rx_status */
++#define HSE_RX_ALIGNED_MASK	BIT(1)	/* stat_rx_aligned */
++#define HSE_TICK_TRIGGER	BIT(0)
++#define HSE_LINK_POLL_MS	1000
+ /* Switchable 1/10/25G MAC Register Definitions */
+ #define XXVS_RESET_OFFSET		0x00000004
+ #define XXVS_AN_CTL1_OFFSET		0x000000e0
+@@ -1070,6 +1086,7 @@ struct axienet_local {
+ 	seqcount_mutex_t hw_stats_seqcount;
+ 	struct mutex stats_lock;
+ 	struct delayed_work stats_work;
++	struct delayed_work hse_link_work;
+ 	bool reset_in_progress;
+ 
+ 	bool stopping;
+@@ -1251,6 +1268,8 @@ struct axienet_dma_q {
+  * @XAXIENET_MRMAC:	 IP type is hardened Multi Rate MAC (MRMAC).
+  * @XAXIENET_1G_10G_25G: IP type is 1G/10G/25G MAC.
+  * @XAXIENET_DCMAC: IP type is 600G Channelized Multirate Ethernet (DCMAC)
++ * @XAXIENET_HSE: IP type is UltraScale+ Integrated 100G Ethernet (CMAC) or
++ *		  40G/50G High Speed Ethernet Subsystem (l_ethernet)
+  *
+  */
+ enum axienet_ip_type {
+@@ -1260,6 +1279,7 @@ enum axienet_ip_type {
+ 	XAXIENET_MRMAC,
+ 	XAXIENET_1G_10G_25G,
+ 	XAXIENET_DCMAC,
++	XAXIENET_HSE,
+ };
+ 
+ struct axienet_config {
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+index 51489c5..ed8e698 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+@@ -1075,6 +1075,44 @@ static inline int xxv_gt_reset(struct net_device *ndev)
+ 	return 0;
+ }
+ 
++/* The 100G CMAC and 40G/50G Ethernet subsystems (HSE) have no PHY/phylink
++ * and no link-change interrupt. Worse, on designs where the GT reference
++ * clock comes from a programmable clock generator (e.g. the 2x QSFP28 FMC's
++ * Si5328), the refclk only starts when Linux programs the generator - long
++ * after the in-core GT last saw a reset. Poll RX status/alignment and drive
++ * the netdev carrier from it; while the link is down, pulse the in-core GT
++ * reset (GT_RESET_REG) each cycle to re-attempt alignment once a valid
++ * reference clock and partner signal are present. Scheduled from
++ * axienet_open() and cancelled in axienet_stop().
++ */
++static void axienet_hse_link_poll(struct work_struct *work)
++{
++	struct axienet_local *lp = container_of(work, struct axienet_local,
++						hse_link_work.work);
++	struct net_device *ndev = lp->ndev;
++	bool link_up;
++	u32 val;
++
++	val = axienet_ior(lp, HSE_STAT_RX_STATUS_OFFSET);
++	link_up = (val & HSE_RX_STATUS_MASK) && (val & HSE_RX_ALIGNED_MASK);
++
++	if (link_up && !netif_carrier_ok(ndev)) {
++		netif_carrier_on(ndev);
++		netdev_info(ndev, "HSE MAC link up at %d Mbps\n",
++			    lp->max_speed);
++	} else if (!link_up) {
++		if (netif_carrier_ok(ndev)) {
++			netif_carrier_off(ndev);
++			netdev_info(ndev, "HSE MAC link down\n");
++		}
++		/* Pulse the in-core GT reset to re-attempt RX alignment */
++		xxv_gt_reset(ndev);
++	}
++
++	schedule_delayed_work(&lp->hse_link_work,
++			      msecs_to_jiffies(HSE_LINK_POLL_MS));
++}
++
+ int __axienet_device_reset(struct axienet_dma_q *q)
+ {
+ 	struct axienet_local *lp = q->lp;
+@@ -1213,7 +1251,8 @@ static int axienet_device_reset(struct net_device *ndev)
+ 	lp->max_frm_size = XAE_MAX_VLAN_FRAME_SIZE;
+ 	if (lp->axienet_config->mactype != XAXIENET_10G_25G &&
+ 	    lp->axienet_config->mactype != XAXIENET_1G_10G_25G &&
+-	    lp->axienet_config->mactype != XAXIENET_MRMAC) {
++	    lp->axienet_config->mactype != XAXIENET_MRMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE) {
+ 		lp->options |= XAE_OPTION_VLAN;
+ 		lp->options &= (~XAE_OPTION_JUMBO);
+ 	}
+@@ -1225,7 +1264,8 @@ static int axienet_device_reset(struct net_device *ndev)
+ 		if (lp->max_frm_size <= lp->rxmem &&
+ 		    lp->axienet_config->mactype != XAXIENET_10G_25G &&
+ 		    lp->axienet_config->mactype != XAXIENET_1G_10G_25G &&
+-		    lp->axienet_config->mactype != XAXIENET_MRMAC)
++		    lp->axienet_config->mactype != XAXIENET_MRMAC &&
++		    lp->axienet_config->mactype != XAXIENET_HSE)
+ 			lp->options |= XAE_OPTION_JUMBO;
+ 	}
+ 
+@@ -1246,7 +1286,8 @@ static int axienet_device_reset(struct net_device *ndev)
+ 	if (lp->axienet_config->mactype != XAXIENET_10G_25G &&
+ 	    lp->axienet_config->mactype != XAXIENET_1G_10G_25G &&
+ 	    lp->axienet_config->mactype != XAXIENET_MRMAC &&
+-	    lp->axienet_config->mactype != XAXIENET_DCMAC) {
++	    lp->axienet_config->mactype != XAXIENET_DCMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE) {
+ 		axienet_status = axienet_ior(lp, XAE_RCW1_OFFSET);
+ 		axienet_status &= ~XAE_RCW1_RX_MASK;
+ 		axienet_iow(lp, XAE_RCW1_OFFSET, axienet_status);
+@@ -1316,7 +1357,8 @@ static int axienet_device_reset(struct net_device *ndev)
+ 
+ 	if (lp->axienet_config->mactype == XAXIENET_10G_25G ||
+ 	    lp->axienet_config->mactype == XAXIENET_1G_10G_25G ||
+-	    lp->axienet_config->mactype == XAXIENET_MRMAC) {
++	    lp->axienet_config->mactype == XAXIENET_MRMAC ||
++	    lp->axienet_config->mactype == XAXIENET_HSE) {
+ 		lp->options |= XAE_OPTION_FCS_STRIP;
+ 		lp->options |= XAE_OPTION_FCS_INSERT;
+ 	} else {
+@@ -2068,7 +2110,8 @@ static int axienet_queue_xmit(struct sk_buff *skb,
+ 	if (lp->axienet_config->mactype == XAXIENET_10G_25G ||
+ 	    lp->axienet_config->mactype == XAXIENET_1G_10G_25G ||
+ 	    lp->axienet_config->mactype == XAXIENET_MRMAC ||
+-	    lp->axienet_config->mactype == XAXIENET_DCMAC) {
++	    lp->axienet_config->mactype == XAXIENET_DCMAC ||
++	    lp->axienet_config->mactype == XAXIENET_HSE) {
+ 		/* Need to manually pad the small frames in case of XXV MAC
+ 		 * because the pad field is not added by the IP. We must present
+ 		 * a packet that meets the minimum length to the IP core.
+@@ -3095,6 +3138,16 @@ static int axienet_open(struct net_device *ndev)
+ 		axienet_iow(lp, MRMAC_TICK_OFFSET, MRMAC_TICK_TRIGGER);
+ 	}
+ 
++	if (lp->axienet_config->mactype == XAXIENET_HSE) {
++		/* CMAC / 40G-50G: bring the interface up with carrier off and
++		 * let the HSE link monitor drive the carrier from RX
++		 * alignment (see axienet_hse_link_poll).
++		 */
++		netif_carrier_off(ndev);
++		axienet_iow(lp, HSE_TICK_OFFSET, HSE_TICK_TRIGGER);
++		schedule_delayed_work(&lp->hse_link_work, 0);
++	}
++
+ 	/* If Runtime speed switching supported */
+ 	if (lp->axienet_config->mactype == XAXIENET_10G_25G &&
+ 	    lp->phy_mode != PHY_INTERFACE_MODE_USXGMII &&
+@@ -3162,6 +3215,9 @@ static int axienet_stop(struct net_device *ndev)
+ 
+ 	cancel_delayed_work_sync(&lp->stats_work);
+ 
++	if (lp->axienet_config->mactype == XAXIENET_HSE)
++		cancel_delayed_work_sync(&lp->hse_link_work);
++
+ 	if (lp->phylink) {
+ 		phylink_stop(lp->phylink);
+ 		phylink_disconnect_phy(lp->phylink);
+@@ -4944,6 +5000,18 @@ static const struct axienet_config axienet_dcmac_config = {
+ 	.gt_reset = dcmac_gt_reset,
+ };
+ 
++/* UltraScale+ Integrated 100G Ethernet (CMAC) and 40G/50G High Speed
++ * Ethernet Subsystem (l_ethernet): same register template as the XXV MAC
++ * for GT reset and TX/RX enable/FCS controls, HSE-specific RX status.
++ */
++static const struct axienet_config axienet_hse_config = {
++	.mactype = XAXIENET_HSE,
++	.setoptions = xxvenet_setoptions,
++	.clk_init = xxvenet_clk_init,
++	.tx_ptplen = 0,
++	.gt_reset = xxv_gt_reset,
++};
++
+ /* Match table for of_platform binding */
+ static const struct of_device_id axienet_of_match[] = {
+ 	{ .compatible = "xlnx,axi-ethernet-1.00.a", .data = &axienet_1_2p5g_config},
+@@ -4962,6 +5030,10 @@ static const struct of_device_id axienet_of_match[] = {
+ 					.data = &axienet_1g10g25g_config},
+ 	{ .compatible = "xlnx,dcmac-2.4",
+ 					.data = &axienet_dcmac_config},
++	{ .compatible = "xlnx,cmac-usplus-3.1",
++					.data = &axienet_hse_config},
++	{ .compatible = "xlnx,l-ethernet-4.0",
++					.data = &axienet_hse_config},
+ 	{},
+ };
+ 
+@@ -5118,6 +5190,7 @@ static int axienet_probe(struct platform_device *pdev)
+ 	mutex_init(&lp->stats_lock);
+ 	seqcount_mutex_init(&lp->hw_stats_seqcount, &lp->stats_lock);
+ 	INIT_DEFERRABLE_WORK(&lp->stats_work, axienet_refresh_stats);
++	INIT_DELAYED_WORK(&lp->hse_link_work, axienet_hse_link_poll);
+ 	INIT_LIST_HEAD(&lp->rx_fs_list.list);
+ 
+ 	lp->axi_clk = devm_clk_get_optional(&pdev->dev, "s_axi_lite_clk");
+@@ -5216,7 +5289,8 @@ static int axienet_probe(struct platform_device *pdev)
+ 						   "xlnx,switch-x-sgmii");
+ 
+ 	/* Start with the proprietary, and broken phy_type */
+-	if (lp->axienet_config->mactype != XAXIENET_MRMAC) {
++	if (lp->axienet_config->mactype != XAXIENET_MRMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE) {
+ 		ret = of_property_read_u32(pdev->dev.of_node, "xlnx,phy-type", &value);
+ 		if (!ret) {
+ 			switch (value) {
+@@ -5256,7 +5330,8 @@ static int axienet_probe(struct platform_device *pdev)
+ 
+ 	if (lp->axienet_config->mactype == XAXIENET_1_2p5G ||
+ 	    lp->axienet_config->mactype == XAXIENET_MRMAC ||
+-	    lp->axienet_config->mactype == XAXIENET_DCMAC) {
++	    lp->axienet_config->mactype == XAXIENET_DCMAC ||
++	    lp->axienet_config->mactype == XAXIENET_HSE) {
+ 		ret = of_property_read_u32(pdev->dev.of_node, "max-speed",
+ 					   &lp->max_speed);
+ 
+@@ -5766,6 +5841,7 @@ static int axienet_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (lp->axienet_config->mactype != XAXIENET_MRMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE &&
+ 	    lp->phy_mode != PHY_INTERFACE_MODE_USXGMII) {
+ 		lp->pcs.ops = &axienet_pcs_ops;
+ 		lp->pcs.neg_mode = true;
+@@ -5863,6 +5939,7 @@ static int axienet_probe(struct platform_device *pdev)
+ 	__set_bit(lp->phy_mode, lp->phylink_config.supported_interfaces);
+ 
+ 	if (lp->axienet_config->mactype != XAXIENET_MRMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE &&
+ 	    lp->phy_mode != PHY_INTERFACE_MODE_USXGMII)
+ 		lp->phylink = phylink_create(&lp->phylink_config, pdev->dev.fwnode,
+ 					     lp->phy_mode,

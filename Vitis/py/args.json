@@ -1,0 +1,11 @@
+{
+    "bd_name": "qsfp",
+    "app_name": "echo_server",
+    "app_template": "None",
+    "bsp_libs": [],
+    "src": {"all": "common/src"},
+    "linker_script_mods": {
+        "microblaze": "relocate_to_local_mem"
+    },
+    "combine_bit_elf": true
+}

@@ -27,17 +27,47 @@
 //   [9]   = Preempt (frame preemption; valid when tlast=1)
 //   [10]  = Resume  (TX preemption; unused here)
 //
-// Both modules are purely combinational glue; the downstream CDC FIFO handles
-// the clock crossing and buffering. The aclk port carries no logic - it exists
+// The TX adapter is purely combinational glue (the MRMAC TX client HAS
+// backpressure, tx_axis_tready); its aclk port carries no logic - it exists
 // only so the AXIS interface has an associated clock (FREQ_HZ propagation) in
-// IP integrator. NOTE: the MRMAC RX client has no backpressure (no rx tready),
-// so the RX adapter does not honor m_axis_tready; downstream must always accept.
+// IP integrator. The RX adapter is NOT: the MRMAC RX client has no
+// backpressure at all (no rx tready pin on the IP), so every beat it presents
+// must be taken on that cycle or it is lost. The RX adapter therefore feeds
+// the packed 384b beats into a store-and-forward frame FIFO with whole-frame
+// drop (rx_frame_fifo, see rx_frame_fifo.v) - the ONLY place in the RX path
+// where frames may be discarded, and it discards them whole.
 // ---------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
 
-// RX: MRMAC client (6x64b + 6x tkeep_user) -> standard 384b AXIS master
-module mrmac_rx_axis_adapter (
+// RX: MRMAC client (6x64b + 6x tkeep_user) -> standard 384b AXIS master,
+// through a store-and-forward frame FIFO in the MRMAC client clock domain
+// (aclk, 390.625 MHz).
+//
+// Why: the MRMAC RX client cannot be stalled, but everything downstream can
+// (dwidth converter -> CDC FIFO -> AXI MCDMA S2MM -> NoC -> DDR, plus the S2MM
+// waiting for free descriptors), and the S2MM path (512b x 100 MHz = 51.2
+// Gb/s) is slower than the 100G line. Previously the six lanes went straight
+// into the dwidth converter with m_axis_tready ignored, so whenever the CDC
+// FIFO filled up, individual beats (including TLAST beats) silently vanished
+// mid-frame: truncated and MERGED frames reached the DMA while the MAC
+// counters stayed clean (the same defect was fixed in the sfp28-fmc-mrmac
+// design, which shares this datapath structure).
+//
+// Frame error: tkeep_user<M>[8] is the per-lane Err flag of the TLAST beat.
+// It is taken from every lane that carries data on that beat (tkeep bit 0 of
+// the lane set; the valid bytes of the last beat are contiguous from lane 0),
+// so undefined flags of empty lanes cannot drop a good frame.
+//
+// Drop counters (see rx_frame_fifo): rx_drop_status[29:6] = frames dropped
+// because the FIFO was full / oversize, [5:0] = frames the MAC flagged bad.
+//
+// Memory: FIFO_DEPTH beats of 48 bytes (default 2048 = 96 KB: ~26 x 36Kb
+// block RAM), one write + one read port in aclk.
+module mrmac_rx_axis_adapter #(
+  parameter integer FIFO_DEPTH      = 2048,  // frame FIFO depth in 384b beats (power of 2)
+  parameter integer DROP_ERR_FRAMES = 1      // 1 = drop frames with the MAC error flag set
+)(
   // From the MRMAC 100G client (loose ports; not part of an AXIS interface)
   (* X_INTERFACE_IGNORE = "true" *) input wire [63:0] rx_axis_tdata0,
   (* X_INTERFACE_IGNORE = "true" *) input wire [63:0] rx_axis_tdata1,
@@ -60,20 +90,55 @@ module mrmac_rx_axis_adapter (
   (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TVALID" *) output wire         m_axis_tvalid,
   (* X_INTERFACE_INFO = "xilinx.com:interface:axis:1.0 M_AXIS TREADY" *) input  wire         m_axis_tready,
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 ACLK CLK" *)
-  (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXIS" *)
-  input wire aclk
+  (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF M_AXIS, ASSOCIATED_RESET aresetn" *)
+  input wire aclk,
+  (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 ARESETN RST" *)
+  (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+  input wire aresetn,
+  // Drop-counter read-out clock (the AXI GPIO's s_axi_aclk)
+  (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 SYS_CLK CLK" *)
+  input wire sys_clk,
+  output wire [29:0] rx_drop_status
 );
-  assign m_axis_tdata = {rx_axis_tdata5, rx_axis_tdata4, rx_axis_tdata3,
-                         rx_axis_tdata2, rx_axis_tdata1, rx_axis_tdata0};
+  wire [383:0] data = {rx_axis_tdata5, rx_axis_tdata4, rx_axis_tdata3,
+                       rx_axis_tdata2, rx_axis_tdata1, rx_axis_tdata0};
   // tkeep_user[7:0] is only valid on the last beat; every other beat is full
   // (48 valid bytes). Forcing all-ones on non-last beats avoids propagating the
   // undefined tkeep_user value the MRMAC drives mid-frame.
-  assign m_axis_tkeep = rx_axis_tlast
+  wire [47:0] keep = rx_axis_tlast
         ? {rx_axis_tkeep_user5[7:0], rx_axis_tkeep_user4[7:0], rx_axis_tkeep_user3[7:0],
            rx_axis_tkeep_user2[7:0], rx_axis_tkeep_user1[7:0], rx_axis_tkeep_user0[7:0]}
         : {48{1'b1}};
-  assign m_axis_tlast  = rx_axis_tlast;
-  assign m_axis_tvalid = rx_axis_tvalid;
+  wire err = (rx_axis_tkeep_user0[8] & rx_axis_tkeep_user0[0]) |
+             (rx_axis_tkeep_user1[8] & rx_axis_tkeep_user1[0]) |
+             (rx_axis_tkeep_user2[8] & rx_axis_tkeep_user2[0]) |
+             (rx_axis_tkeep_user3[8] & rx_axis_tkeep_user3[0]) |
+             (rx_axis_tkeep_user4[8] & rx_axis_tkeep_user4[0]) |
+             (rx_axis_tkeep_user5[8] & rx_axis_tkeep_user5[0]);
+
+  rx_frame_fifo #(
+    .DATA_W          (384),
+    .DEPTH           (FIFO_DEPTH),
+    .DROP_ERR_FRAMES (DROP_ERR_FRAMES),
+    .MODE            (0)        // unchanged (HW-proven) MRMAC behaviour and layout
+  ) fifo (
+    .aclk           (aclk),
+    .aresetn        (aresetn),
+    .s_abort        (1'b0),
+    .s_hold         (1'b0),
+    .s_valid        (rx_axis_tvalid),
+    .s_last         (rx_axis_tlast),
+    .s_err          (err),
+    .s_keep         (keep),
+    .s_data         (data),
+    .m_axis_tdata   (m_axis_tdata),
+    .m_axis_tkeep   (m_axis_tkeep),
+    .m_axis_tlast   (m_axis_tlast),
+    .m_axis_tvalid  (m_axis_tvalid),
+    .m_axis_tready  (m_axis_tready),
+    .sys_clk        (sys_clk),
+    .rx_drop_status (rx_drop_status)
+  );
 endmodule
 
 // TX: standard 384b AXIS slave -> MRMAC client (6x64b + 6x tkeep_user)

@@ -1,0 +1,28 @@
+From: Opsero Electronic Design Inc. <support@opsero.com>
+Subject: [PATCH] net: axienet: exempt HSE MACs from the pcs-handle requirement
+
+The XAXIENET_HSE mactype (UltraScale+ 100G CMAC / 40G-50G l_ethernet,
+added by 0002-net-axienet-add-hse-cmac-l-ethernet-support.patch) has no
+MDIO bus, PCS phy or external PHY: like MRMAC, link state is tracked by
+polling RX alignment. The probe-time block that demands a pcs-handle or
+phy-handle exempts every other PHY-less mactype but not HSE, so every
+CMAC / l_ethernet port fails to probe:
+
+  xilinx_axienet 80060000.l_ethernet: pcs-handle (preferred for
+    1000BaseX/SGMII) or phy-handle required for external PHY
+  xilinx_axienet 80060000.l_ethernet: probe with driver xilinx_axienet
+    failed with error -22
+
+Add the missing exemption. Found on first hardware boot of the
+zcu106_hpc0 target (2x QSFP28 FMC, 2x 40GBASE-R4).
+---
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+@@ -5808,6 +5808,7 @@
+ 	if (lp->axienet_config->mactype != XAXIENET_10G_25G &&
+ 	    lp->axienet_config->mactype != XAXIENET_1G_10G_25G &&
+ 	    lp->axienet_config->mactype != XAXIENET_MRMAC &&
++	    lp->axienet_config->mactype != XAXIENET_HSE &&
+ 	    lp->axienet_config->mactype != XAXIENET_DCMAC) {
+ 		np = of_parse_phandle(pdev->dev.of_node, "pcs-handle", 0);
+ 		if (!np) {

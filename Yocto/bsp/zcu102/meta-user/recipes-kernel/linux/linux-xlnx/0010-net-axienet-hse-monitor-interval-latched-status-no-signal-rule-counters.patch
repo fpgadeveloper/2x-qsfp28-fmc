@@ -1,0 +1,537 @@
+From e9b6d54bdf33aa92241222356053db12aced129f Mon Sep 17 00:00:00 2001
+From: "Opsero Electronic Design Inc." <support@opsero.com>
+Date: Tue, 29 Sep 2026 20:27:15 -0400
+Subject: [PATCH] net: axienet: HSE monitor - interval-latched status, robust
+ no-signal rule, cumulative counters
+
+Third round of fixes for the HSE link monitor, from the second hardware
+retest of the 2x QSFP28 FMC 40G design (ZCU106):
+
+1. Interval sampling. RX status (and on l_ethernet block lock) are
+   latched-low, clear-on-read. The monitor used to flush them and judge
+   an immediate second read, i.e. a few microseconds. Now every sample
+   reads them twice: the first read says whether the RX was good during
+   the WHOLE interval since the previous sample, the second read gives the
+   current state. The interval is only trusted when no reset of ours lies
+   inside it: after open and after every recovery reset it is discarded,
+   and HSE_LINK_ARM_MS (100 ms) after each reset the registers are flushed
+   so that the next interval starts after the reset has completed.
+
+2. No-signal rule. A dark receiver showed block lock on some lanes
+   (0x5/0x6/0x7) in the flush-and-read sample, so it was taken as "signal
+   present"; three failed RX-only resets then led to a reset-all (28 in a
+   60 s dark period), each of which pushed the lit direction through a
+   re-alignment. Now the signal counts as usable only if ALL four lanes
+   were block-locked AND the RX was aligned continuously over the interval.
+   Otherwise: GT RX datapath reset only, 500 ms for the first three, then
+   every 1 s, every 2 s after ten, never a reset-all. Reset-all remains
+   for GTWIZ reset-done not set (PLL/refclk) and for a usable signal with
+   an RX that still does not work after three RX-only resets.
+
+3. Healed outages visible. A partner re-alignment of ~0.75 s that fell
+   between two 1 s healthy samples went unnoticed. A healthy sample whose
+   interval read shows a loss of status/alignment/block lock now counts
+   hse_rx_unaligned_events and logs a rate-limited info line; the carrier
+   is not changed.
+
+4. MAC statistics. The monitor's TICK windows (every sample) are summed
+   into 64-bit ethtool counters hse_mac_rx_total, _good, _bad_fcs,
+   _stomped_fcs, _fragment, _truncated, _bad_code (l_ethernet only), so the
+   error counts no longer depend on the design's 14-bit wrapping FIFO
+   error-drop field. Tools that write TICK_REG themselves take those
+   windows away from these counters.
+
+5. rx_dma_pkt_drop is now cumulative across down/up: the MCDMA S2MM
+   packet drop count is added to a 64-bit software counter just before
+   every DMA reset.
+---
+ drivers/net/ethernet/xilinx/xilinx_axienet.h  |  31 +++
+ .../net/ethernet/xilinx/xilinx_axienet_main.c | 233 +++++++++++++-----
+ .../ethernet/xilinx/xilinx_axienet_mcdma.c    |  27 +-
+ 3 files changed, 228 insertions(+), 63 deletions(-)
+
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet.h b/drivers/net/ethernet/xilinx/xilinx_axienet.h
+index d4f5ef66ba0c..3da0b0c9c3af 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet.h
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet.h
+@@ -517,7 +517,14 @@ enum temac_stat {
+ #define HSE_LETH_BLOCK_LOCK_MASK	0xF	/* 4 PCS lanes */
+ #define HSE_LETH_STAT_BIP_ERR_OFFSET(l)	(0x00000508 + 8 * (l))	/* LSB, lane 0-3 */
+ #define HSE_LETH_STAT_BAD_CODE_OFFSET	0x00000660	/* per-tick count, LSB */
++#define HSE_LETH_STAT_RX_TOTAL_OFFSET	0x00000808	/* per-tick count, LSB */
+ #define HSE_LETH_STAT_RX_GOOD_OFFSET	0x00000810	/* per-tick count, LSB */
++#define HSE_LETH_STAT_RX_FRAGMENT_OFFSET	0x000008A0
++#define HSE_LETH_STAT_RX_BAD_FCS_OFFSET	0x000008C0
++#define HSE_LETH_STAT_RX_STOMPED_OFFSET	0x000008D0
++#define HSE_LETH_STAT_RX_TRUNCATED_OFFSET	0x00000910
++/* per-tick statistics are 48 bit: LSB at the offset, MSB[15:0] at +4 */
++#define HSE_LETH_STAT_MSB		0x00000004
+ #define HSE_LETH_STAT_TIMEOUT		0xBADBAD00	/* read timed out in-core */
+ 
+ #define HSE_RX_STATUS_MASK	BIT(0)	/* stat_rx_status */
+@@ -555,6 +562,13 @@ enum temac_stat {
+  * disturb the partner's healthy RX
+  */
+ #define HSE_LINK_NOSIG_RETRY_MS	1000
++#define HSE_LINK_NOSIG_SLOW_MS	2000	/* after HSE_NOSIG_SLOW_AFTER attempts */
++#define HSE_NOSIG_SLOW_AFTER	10
++/* After each recovery reset, the latched-low RX status / block lock are
++ * flushed HSE_LINK_ARM_MS later, so the interval judged at the next sample
++ * starts after the reset has completed.
++ */
++#define HSE_LINK_ARM_MS		100
+ 
+ /* HSE link monitor statistics ("ethtool -S", after rx_dma_pkt_drop) */
+ enum axienet_hse_stat {
+@@ -565,8 +579,20 @@ enum axienet_hse_stat {
+ 	HSE_STAT_GT_RX_RESETS,		/* recovery: GT RX datapath reset */
+ 	HSE_STAT_GT_RESET_ALLS,		/* recovery: GT reset-all */
+ 	HSE_STAT_WEDGE_RESTARTS,	/* RX wedge: interface restarted */
++	/* l_ethernet only: the MAC's own per-tick RX statistics, summed over
++	 * every monitor TICK window into 64-bit counters (kept across down/up)
++	 */
++	HSE_STAT_MAC_RX_TOTAL,
++	HSE_STAT_MAC_RX_GOOD,
++	HSE_STAT_MAC_RX_BAD_FCS,
++	HSE_STAT_MAC_RX_STOMPED,
++	HSE_STAT_MAC_RX_FRAGMENT,
++	HSE_STAT_MAC_RX_TRUNCATED,
++	HSE_STAT_MAC_RX_BAD_CODE,
+ 	HSE_STAT_NUM
+ };
++
++#define HSE_STAT_MON_NUM	HSE_STAT_MAC_RX_TOTAL	/* CMAC: monitor counters only */
+ /* Switchable 1/10/25G MAC Register Definitions */
+ #define XXVS_RESET_OFFSET		0x00000004
+ #define XXVS_AN_CTL1_OFFSET		0x000000e0
+@@ -1166,8 +1192,13 @@ struct axienet_local {
+ 	unsigned int hse_link_bad;
+ 	unsigned int hse_link_resets;
+ 	unsigned int hse_rx_fails;
++	unsigned int hse_nosig;
++	unsigned int hse_arm_rest;
++	bool hse_arm;
++	bool hse_int_valid;
+ 	unsigned long hse_bad_since;
+ 	u64 hse_stats[HSE_STAT_NUM];
++	u64 rx_dma_pktdrop_acc;
+ 	unsigned int hse_wedge;
+ 	unsigned long hse_rx_seen;
+ 	unsigned long hse_restart_at;
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+index 20af161d6e94..78181548831f 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_main.c
+@@ -1089,8 +1089,8 @@ static inline int xxv_gt_reset(struct net_device *ndev)
+  * re-attempt alignment once a valid reference clock and partner signal are
+  * present. Scheduled from axienet_open() and cancelled in axienet_stop().
+  *
+- * A sample is good when RX status AND aligned are set (latched-low, cleared
+- * on read: read twice, judge the second read) and, on l_ethernet, the RX
++ * A sample is good when RX status AND aligned are set now (latched-low,
++ * cleared on read: the second of two reads) and, on l_ethernet, the RX
+  * did not decode a flood of bad 64b/66b codes in a fresh statistics window:
+  * an RX datapath can align and hold block lock while decoding garbage
+  * (aligned, hi_ber 0, ~3e8 bad codes/s, zero frames), which a status-only
+@@ -1104,21 +1104,19 @@ static inline int xxv_gt_reset(struct net_device *ndev)
+  * bad sample and when the RX recovers without a carrier drop, and the
+  * hse_rx_unaligned_* / hse_rx_error_samples ethtool counters.
+  *
+- * Recovery while down, on l_ethernet: GT not out of reset (GTWIZ reset done
+- * low, e.g. the refclk started late) -> reset-all; no signal at all (no
+- * block lock on any lane: dark fiber, module off) -> GT RX datapath reset
+- * only, every HSE_LINK_NOSIG_RETRY_MS after the first attempts, never a
+- * reset-all (restarting our TX would push the partner's healthy RX through
+- * a re-alignment, into the error state above); signal present but RX not
+- * working -> RX datapath reset, and a reset-all only after
+- * HSE_RX_ONLY_RESETS such attempts failed. CMAC: reset-all (the only GT
+- * reset its register map has).
++ * The first of the two reads covers the whole interval since the previous
++ * sample: an outage that heals between two healthy samples is still
++ * counted (hse_rx_unaligned_events) and logged. Recovery while down: see
++ * axienet_hse_recover().
+  */
+ struct axienet_hse_sample {
+-	u32 sts;	/* RX status (latched-low), second read */
++	u32 sts_int;	/* RX status, latched-low over the interval since the last sample */
++	u32 sts;	/* RX status now (read right after sts_int) */
++	u32 blk_int;	/* l_ethernet block lock, latched-low over the interval */
++	u32 blk;	/* l_ethernet block lock now */
+ 	u32 bad_code;	/* bad 64b/66b codes in a HSE_BAD_CODE_WINDOW_US window */
+ 	u32 bip_max;	/* worst lane's BIP-8 errors in the same window */
+-	u32 rx_good;	/* good frames since the previous sample's window */
++	u32 rx_good;	/* good frames since the previous statistics TICK */
+ };
+ 
+ static u32 axienet_hse_count(struct axienet_local *lp, u32 off)
+@@ -1129,6 +1127,58 @@ static u32 axienet_hse_count(struct axienet_local *lp, u32 off)
+ 	return val == HSE_LETH_STAT_TIMEOUT ? 0 : val;
+ }
+ 
++/* One 48-bit per-tick statistics counter (0 if the read timed out) */
++static u64 axienet_hse_stat48(struct axienet_local *lp, u32 off)
++{
++	u32 lo = axienet_ior(lp, off);
++	u32 hi = axienet_ior(lp, off + HSE_LETH_STAT_MSB);
++
++	if (lo == HSE_LETH_STAT_TIMEOUT || hi == HSE_LETH_STAT_TIMEOUT)
++		return 0;
++	return ((u64)(hi & 0xffff) << 32) | lo;
++}
++
++/* Close the current statistics window (TICK) and add the MAC's RX counts
++ * to the 64-bit ethtool counters; returns the window's good frames.
++ */
++static u32 axienet_hse_stat_window(struct axienet_local *lp)
++{
++	static const u16 off[] = {
++		[HSE_STAT_MAC_RX_TOTAL - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_TOTAL_OFFSET,
++		[HSE_STAT_MAC_RX_GOOD - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_GOOD_OFFSET,
++		[HSE_STAT_MAC_RX_BAD_FCS - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_BAD_FCS_OFFSET,
++		[HSE_STAT_MAC_RX_STOMPED - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_STOMPED_OFFSET,
++		[HSE_STAT_MAC_RX_FRAGMENT - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_FRAGMENT_OFFSET,
++		[HSE_STAT_MAC_RX_TRUNCATED - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_RX_TRUNCATED_OFFSET,
++		[HSE_STAT_MAC_RX_BAD_CODE - HSE_STAT_MAC_RX_TOTAL] =
++			HSE_LETH_STAT_BAD_CODE_OFFSET,
++	};
++	u64 good = 0, v;
++	unsigned int i;
++
++	axienet_iow(lp, HSE_LETH_TICK_OFFSET, HSE_TICK_TRIGGER);
++	for (i = 0; i < ARRAY_SIZE(off); i++) {
++		v = axienet_hse_stat48(lp, off[i]);
++		lp->hse_stats[HSE_STAT_MAC_RX_TOTAL + i] += v;
++		if (HSE_STAT_MAC_RX_TOTAL + i == HSE_STAT_MAC_RX_GOOD)
++			good = v;
++	}
++	return min_t(u64, good, U32_MAX);
++}
++
++/* The RX status (and, on l_ethernet, block lock) registers are latched-low
++ * and cleared on read. The FIRST read of a sample returns whether the RX
++ * was good during the WHOLE interval since the previous sample's reads;
++ * the second read returns the current state. The monitor is the only
++ * reader of these registers; the interval is meaningful only when
++ * lp->hse_int_valid (no reset of ours inside it).
++ */
+ static bool axienet_hse_link_sample(struct axienet_local *lp,
+ 				    struct axienet_hse_sample *smp)
+ {
+@@ -1138,27 +1188,33 @@ static bool axienet_hse_link_sample(struct axienet_local *lp,
+ 	bool ok;
+ 
+ 	memset(smp, 0, sizeof(*smp));
+-	axienet_ior(lp, off);		/* flush the latched-low history */
++	smp->sts_int = axienet_ior(lp, off);
+ 	smp->sts = axienet_ior(lp, off);
++	if (lp->hse_leth) {
++		smp->blk_int = axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET);
++		smp->blk = axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET);
++	}
+ 	ok = (smp->sts & HSE_RX_STATUS_MASK) && (smp->sts & HSE_RX_ALIGNED_MASK);
+ 
+-	if (ok && lp->hse_leth) {
+-		/* Statistics are per-tick counts, latched and restarted by
+-		 * each TICK_REG write (MODE_REG tick_reg_mode_sel = 1). The
+-		 * first TICK closes the window since the previous sample
+-		 * (good frames, for the wedge check); the second one, after
+-		 * HSE_BAD_CODE_WINDOW_US, a fresh short window for the error
+-		 * counts, so that errors from before alignment do not count.
+-		 */
+-		axienet_iow(lp, HSE_LETH_TICK_OFFSET, HSE_TICK_TRIGGER);
+-		smp->rx_good = axienet_hse_count(lp,
+-						 HSE_LETH_STAT_RX_GOOD_OFFSET);
++	if (!lp->hse_leth)
++		return ok;
++
++	/* Statistics are per-tick counts, latched and restarted by each
++	 * TICK_REG write (MODE_REG tick_reg_mode_sel = 1). The first window
++	 * runs since the previous sample (good frames for the wedge check);
++	 * the second, HSE_BAD_CODE_WINDOW_US long, gives fresh error counts,
++	 * so that errors from before alignment do not count. Both windows are
++	 * added to the hse_mac_rx_* counters.
++	 */
++	smp->rx_good = axienet_hse_stat_window(lp);
++	if (ok) {
+ 		usleep_range(HSE_BAD_CODE_WINDOW_US,
+ 			     HSE_BAD_CODE_WINDOW_US + 1000);
+-		axienet_iow(lp, HSE_LETH_TICK_OFFSET, HSE_TICK_TRIGGER);
+-		smp->bad_code = axienet_hse_count(lp,
+-						  HSE_LETH_STAT_BAD_CODE_OFFSET);
+-		for (l = 0; l < 4; l++)
++		smp->bad_code = lp->hse_stats[HSE_STAT_MAC_RX_BAD_CODE];
++		axienet_hse_stat_window(lp);
++		smp->bad_code = lp->hse_stats[HSE_STAT_MAC_RX_BAD_CODE] -
++				smp->bad_code;
++		for (l = 0; l < 4; l++)		/* same (short) TICK window */
+ 			smp->bip_max = max(smp->bip_max,
+ 					   axienet_hse_count(lp, HSE_LETH_STAT_BIP_ERR_OFFSET(l)));
+ 		if (smp->bad_code > HSE_BAD_CODE_LIMIT ||
+@@ -1223,17 +1279,16 @@ static void axienet_hse_link_log(struct axienet_local *lp, const char *what,
+ {
+ 	if (lp->hse_leth)
+ 		netdev_warn(lp->ndev,
+-			    "HSE MAC %s (rx_sts 0x%x gt_done 0x%x blk_lck 0x%x lane_sync 0x%x sts1 0x%x bad_code %u bip_max %u, %u recovery resets)\n",
+-			    what, smp->sts,
++			    "HSE MAC %s (rx_sts 0x%x/0x%x blk_lck 0x%x/0x%x (interval/now) gt_done 0x%x lane_sync 0x%x sts1 0x%x bad_code %u bip_max %u, %u recovery resets)\n",
++			    what, smp->sts_int, smp->sts, smp->blk_int, smp->blk,
+ 			    axienet_ior(lp, HSE_LETH_GTWIZ_DONE_OFFSET),
+-			    axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET),
+ 			    axienet_ior(lp, HSE_LETH_STAT_LANE_SYNC_OFFSET),
+ 			    axienet_ior(lp, HSE_LETH_STAT_STATUS1_OFFSET),
+ 			    smp->bad_code, smp->bip_max, lp->hse_link_resets);
+ 	else
+ 		netdev_warn(lp->ndev,
+-			    "HSE MAC %s (rx_sts 0x%x, %u recovery resets)\n",
+-			    what, smp->sts, lp->hse_link_resets);
++			    "HSE MAC %s (rx_sts 0x%x/0x%x (interval/now), %u recovery resets)\n",
++			    what, smp->sts_int, smp->sts, lp->hse_link_resets);
+ }
+ 
+ static void axienet_hse_reset_all(struct axienet_local *lp)
+@@ -1254,38 +1309,61 @@ static void axienet_hse_reset_rx(struct axienet_local *lp)
+ 	lp->hse_stats[HSE_STAT_GT_RX_RESETS]++;
+ }
+ 
+-/* One recovery step while the link is down; returns the delay until the
+- * next sample in ms.
++/* One recovery step while the link is down, judged from the interval since
++ * the previous sample (int_ok: that interval started after our last reset
++ * had completed). Returns the delay until the next monitor run in ms.
++ *
++ * l_ethernet:
++ *  - GTWIZ TX/RX reset done not both set (PLL / refclk not up): reset-all.
++ *  - "signal usable" = ALL four lanes block-locked AND the RX aligned
++ *    continuously over the whole interval (latched-low reads). A dark
++ *    receiver can show momentary block lock on some lanes, so anything
++ *    less counts as no usable signal: GT RX datapath reset only, with
++ *    back-off (500 ms x3, then 1 s, then 2 s after 10 attempts), never a
++ *    reset-all - restarting our TX would disturb the partner's healthy RX.
++ *  - signal usable but the RX still not good (e.g. aligned while decoding
++ *    garbage): RX-only reset, and a reset-all after HSE_RX_ONLY_RESETS of
++ *    them in a row failed.
++ * CMAC: reset-all (the only GT reset its register map has).
++ * After every reset the latched registers are flushed HSE_LINK_ARM_MS
++ * later, so that the next interval judged starts after the reset.
+  */
+-static unsigned int axienet_hse_recover(struct axienet_local *lp)
++static unsigned int axienet_hse_recover(struct axienet_local *lp,
++					const struct axienet_hse_sample *smp,
++					bool int_ok)
+ {
+-	u32 gt, blk;
++	u32 lock = HSE_LETH_BLOCK_LOCK_MASK;
++	unsigned int delay = HSE_LINK_RETRY_MS;
++	u32 gt;
+ 
+ 	lp->hse_link_resets++;
+ 	if (!lp->hse_leth) {
+ 		axienet_hse_reset_all(lp);
+-		return HSE_LINK_RETRY_MS;
++		goto arm;
+ 	}
+ 
+ 	gt = axienet_ior(lp, HSE_LETH_GTWIZ_DONE_OFFSET);
+ 	if ((gt & HSE_LETH_GTWIZ_DONE_MASK) != HSE_LETH_GTWIZ_DONE_MASK) {
+-		/* GT itself not up (PLL / refclk): only a reset-all helps */
+ 		lp->hse_rx_fails = 0;
++		lp->hse_nosig = 0;
+ 		axienet_hse_reset_all(lp);
+-		return HSE_LINK_RETRY_MS;
++		goto arm;
+ 	}
+ 
+-	axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET);	/* latched-low */
+-	blk = axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET);
+-	if (blk == HSE_LETH_STAT_TIMEOUT || !(blk & HSE_LETH_BLOCK_LOCK_MASK)) {
+-		/* No signal: RX-only, backing off, never a reset-all */
++	if (!int_ok || (smp->blk_int & lock) != lock ||
++	    !(smp->sts_int & HSE_RX_ALIGNED_MASK)) {
++		/* No usable signal: RX-only, backing off, never a reset-all */
+ 		lp->hse_rx_fails = 0;
++		lp->hse_nosig++;
+ 		axienet_hse_reset_rx(lp);
+-		return lp->hse_link_resets <= HSE_RX_ONLY_RESETS ?
+-		       HSE_LINK_RETRY_MS : HSE_LINK_NOSIG_RETRY_MS;
++		if (lp->hse_nosig > HSE_NOSIG_SLOW_AFTER)
++			delay = HSE_LINK_NOSIG_SLOW_MS;
++		else if (lp->hse_nosig > HSE_RX_ONLY_RESETS)
++			delay = HSE_LINK_NOSIG_RETRY_MS;
++		goto arm;
+ 	}
+ 
+-	/* Signal present, RX not working */
++	lp->hse_nosig = 0;
+ 	if (lp->hse_rx_fails < HSE_RX_ONLY_RESETS) {
+ 		lp->hse_rx_fails++;
+ 		axienet_hse_reset_rx(lp);
+@@ -1293,29 +1371,62 @@ static unsigned int axienet_hse_recover(struct axienet_local *lp)
+ 		lp->hse_rx_fails = 0;
+ 		axienet_hse_reset_all(lp);
+ 	}
+-	return HSE_LINK_RETRY_MS;
++arm:
++	lp->hse_int_valid = false;
++	lp->hse_arm = true;
++	lp->hse_arm_rest = delay - HSE_LINK_ARM_MS;
++	return HSE_LINK_ARM_MS;
+ }
+ 
+ static void axienet_hse_link_poll(struct work_struct *work)
+ {
+ 	struct axienet_local *lp = container_of(work, struct axienet_local,
+ 						hse_link_work.work);
++	u32 good = HSE_RX_STATUS_MASK | HSE_RX_ALIGNED_MASK;
+ 	struct net_device *ndev = lp->ndev;
+ 	struct axienet_hse_sample smp;
+ 	unsigned int delay_ms;
++	bool int_ok;
++
++	if (lp->hse_arm) {
++		/* Start a clean latched interval after our own reset */
++		axienet_ior(lp, lp->hse_leth ? HSE_LETH_STAT_RX_STATUS_OFFSET
++					     : HSE_CMAC_STAT_RX_STATUS_OFFSET);
++		if (lp->hse_leth)
++			axienet_ior(lp, HSE_LETH_STAT_BLOCK_LOCK_OFFSET);
++		lp->hse_arm = false;
++		lp->hse_int_valid = true;
++		delay_ms = lp->hse_arm_rest;
++		goto out;
++	}
+ 
++	int_ok = lp->hse_int_valid;
+ 	if (axienet_hse_link_sample(lp, &smp)) {
++		lp->hse_int_valid = true;
+ 		if (!netif_carrier_ok(ndev)) {
+ 			netif_carrier_on(ndev);
+ 			netdev_info(ndev, "HSE MAC link up at %d Mbps (%u recovery resets)\n",
+ 				    lp->max_speed, lp->hse_link_resets);
+ 			lp->hse_link_resets = 0;
+ 			lp->hse_rx_fails = 0;
++			lp->hse_nosig = 0;
+ 		} else {
+-			if (lp->hse_link_bad && net_ratelimit())
+-				netdev_info(ndev, "HSE RX recovered after %u bad sample(s) in %u ms, carrier kept\n",
+-					    lp->hse_link_bad,
+-					    jiffies_to_msecs(jiffies - lp->hse_bad_since));
++			if (lp->hse_link_bad) {
++				if (net_ratelimit())
++					netdev_info(ndev, "HSE RX recovered after %u bad sample(s) in %u ms, carrier kept\n",
++						    lp->hse_link_bad,
++						    jiffies_to_msecs(jiffies - lp->hse_bad_since));
++			} else if (int_ok &&
++				   ((smp.sts_int & good) != good ||
++				    (lp->hse_leth &&
++				     (smp.blk_int & HSE_LETH_BLOCK_LOCK_MASK) !=
++				     HSE_LETH_BLOCK_LOCK_MASK))) {
++				/* Lost and regained between two samples */
++				lp->hse_stats[HSE_STAT_UNALIGNED_EVENTS]++;
++				if (net_ratelimit())
++					netdev_info(ndev, "HSE RX lost alignment/lock since the previous check (rx_sts 0x%x blk_lck 0x%x over the interval), healed, carrier kept\n",
++						    smp.sts_int, smp.blk_int);
++			}
+ 			if (lp->hse_leth)
+ 				axienet_hse_wedge_check(lp, &smp);
+ 		}
+@@ -1326,9 +1437,9 @@ static void axienet_hse_link_poll(struct work_struct *work)
+ 
+ 	lp->hse_wedge = 0;
+ 	if (netif_carrier_ok(ndev)) {
+-		u32 good = HSE_RX_STATUS_MASK | HSE_RX_ALIGNED_MASK;
+ 		bool unaligned = (smp.sts & good) != good;
+ 
++		lp->hse_int_valid = true;
+ 		if (unaligned) {
+ 			lp->hse_stats[HSE_STAT_UNALIGNED_SAMPLES]++;
+ 			if (!lp->hse_link_bad)
+@@ -1357,7 +1468,7 @@ static void axienet_hse_link_poll(struct work_struct *work)
+ 		axienet_hse_link_log(lp, "link still down", &smp);
+ 	}
+ 
+-	delay_ms = axienet_hse_recover(lp);
++	delay_ms = axienet_hse_recover(lp, &smp, int_ok);
+ out:
+ 	schedule_delayed_work(&lp->hse_link_work, msecs_to_jiffies(delay_ms));
+ }
+@@ -1368,6 +1479,15 @@ int __axienet_device_reset(struct axienet_dma_q *q)
+ 	u32 value;
+ 	int ret;
+ 
++#ifdef CONFIG_AXIENET_HAS_MCDMA
++	/* The MCDMA S2MM packet drop count is cleared by the reset below:
++	 * keep it (reported cumulatively by axienet_get_stats())
++	 */
++	if (lp->num_rx_queues && q == lp->dq[0])
++		lp->rx_dma_pktdrop_acc += axienet_dma_in32(q, XMCDMA_RX_OFFSET +
++							      XMCDMA_PKTDROP_OFFSET);
++#endif
++
+ 	/* Save statistics counters in case they will be reset */
+ 	mutex_lock(&lp->stats_lock);
+ 	if (lp->features & XAE_FEATURE_STATS)
+@@ -3416,6 +3536,9 @@ static int axienet_open(struct net_device *ndev)
+ 		lp->hse_link_bad = 0;
+ 		lp->hse_link_resets = 0;
+ 		lp->hse_rx_fails = 0;
++		lp->hse_nosig = 0;
++		lp->hse_arm = false;
++		lp->hse_int_valid = false;	/* first interval includes the open */
+ 		lp->hse_wedge = 0;
+ 		lp->hse_rx_seen = READ_ONCE(ndev->stats.rx_packets) +
+ 				  READ_ONCE(ndev->stats.rx_dropped);
+diff --git a/drivers/net/ethernet/xilinx/xilinx_axienet_mcdma.c b/drivers/net/ethernet/xilinx/xilinx_axienet_mcdma.c
+index 4277cdfaabad..8ff9053c103f 100644
+--- a/drivers/net/ethernet/xilinx/xilinx_axienet_mcdma.c
++++ b/drivers/net/ethernet/xilinx/xilinx_axienet_mcdma.c
+@@ -109,11 +109,20 @@ static const char axienet_hse_stat_strings[HSE_STAT_NUM][ETH_GSTRING_LEN] = {
+ 	[HSE_STAT_GT_RX_RESETS]		= "hse_gt_rx_resets",
+ 	[HSE_STAT_GT_RESET_ALLS]	= "hse_gt_reset_alls",
+ 	[HSE_STAT_WEDGE_RESTARTS]	= "hse_rx_wedge_restarts",
++	[HSE_STAT_MAC_RX_TOTAL]		= "hse_mac_rx_total",
++	[HSE_STAT_MAC_RX_GOOD]		= "hse_mac_rx_good",
++	[HSE_STAT_MAC_RX_BAD_FCS]	= "hse_mac_rx_bad_fcs",
++	[HSE_STAT_MAC_RX_STOMPED]	= "hse_mac_rx_stomped_fcs",
++	[HSE_STAT_MAC_RX_FRAGMENT]	= "hse_mac_rx_fragment",
++	[HSE_STAT_MAC_RX_TRUNCATED]	= "hse_mac_rx_truncated",
++	[HSE_STAT_MAC_RX_BAD_CODE]	= "hse_mac_rx_bad_code",
+ };
+ 
+ static unsigned int axienet_hse_stat_num(struct axienet_local *lp)
+ {
+-	return lp->axienet_config->mactype == XAXIENET_HSE ? HSE_STAT_NUM : 0;
++	if (lp->axienet_config->mactype != XAXIENET_HSE)
++		return 0;
++	return lp->hse_leth ? HSE_STAT_NUM : HSE_STAT_MON_NUM;
+ }
+ 
+ /**
+@@ -636,14 +645,16 @@ void axienet_get_stats(struct net_device *ndev,
+ 	}
+ 
+ 	/* S2MM packet drop count of the whole MCDMA (PG288 S2MM_PKTDROP_STAT,
+-	 * 32 bit, no read side effect, cleared only by a DMA reset).
+-	 * Frames dropped here found no free RX descriptor and never reached
+-	 * the driver. Read only while up: the DMA is not set up otherwise.
++	 * 32 bit, no read side effect, cleared by every DMA reset - its value
++	 * is added to rx_dma_pktdrop_acc just before each reset, so the
++	 * count reported here is cumulative across down/up). Frames dropped
++	 * here found no free RX descriptor and never reached the driver. The
++	 * register is read only while up: the DMA is not set up otherwise.
+ 	 */
+-	data[AXIENET_MCDMA_PKTDROP_STAT_IDX(lp)] =
+-		(netif_running(ndev) && lp->num_rx_queues) ?
+-		axienet_dma_in32(lp->dq[0], XMCDMA_RX_OFFSET +
+-				 XMCDMA_PKTDROP_OFFSET) : 0;
++	data[AXIENET_MCDMA_PKTDROP_STAT_IDX(lp)] = lp->rx_dma_pktdrop_acc +
++		((netif_running(ndev) && lp->num_rx_queues) ?
++		 axienet_dma_in32(lp->dq[0], XMCDMA_RX_OFFSET +
++				  XMCDMA_PKTDROP_OFFSET) : 0);
+ 
+ 	/* HSE link monitor counters (updated by its work item; kept across
+ 	 * down/up)

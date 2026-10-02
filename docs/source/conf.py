@@ -19,7 +19,7 @@ numfig = True
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = '100G Ethernet Ref Design for 2x QSFP28 FMC'
+project = '100G/40G Ethernet Ref Designs for 2x QSFP28 FMC'
 copyright = '2025, Opsero Electronic Design Inc.'
 author = 'Jeff Johnson'
 
@@ -29,6 +29,9 @@ author = 'Jeff Johnson'
 extensions = [
   'myst_parser',
 ]
+
+# Generate anchors for headings (h1-h4) so that [text](page.md#heading) links resolve
+myst_heading_anchors = 4
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

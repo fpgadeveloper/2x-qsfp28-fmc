@@ -35,6 +35,8 @@ def get_linkspeeds(data):
 # Create design tables for the README.md file
 # This function determines the formatting of the design tables
 def create_tables(data):
+    # Emoji dict (build-flow support columns, e.g. Yocto)
+    to_emoji = {True: ":white_check_mark:", False: ":x:"}
     # License dict
     to_edition = {True: "Enterprise", False: "Standard :free:"}
     # IP license dict (separately-licensed IP cores, e.g. TEMAC/XXV/HDMI/MRMAC)
@@ -44,8 +46,8 @@ def create_tables(data):
     for linkspeed in get_linkspeeds(data):
         tables.append('### {}G designs'.format(linkspeed))
         tables.append('')
-        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Vivado<br> Edition | IP<br>License |')
-        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|-------|')
+        tables.append('| Target board          | Target design      | Link speeds <br> supported | QSFP28 ports | FMC Slot    | Yocto | PetaLinux | Vivado<br> Edition | IP<br>License |')
+        tables.append('|-----------------------|--------------------|------------|-------------|-------------|-------|-------|-------|-------|')
         for design in data['designs']:
             if not design['publish']:
                 continue
@@ -57,6 +59,8 @@ def create_tables(data):
                 ports = '{}x'.format(len(design['lanes']))
                 cols.append('{0}'.format(ports).ljust(11))
                 cols.append('{0}'.format(design['connector']).ljust(11))
+                cols.append('{0}'.format(to_emoji[design.get('yocto', False)]).ljust(5))
+                cols.append('{0}'.format(to_emoji[design.get('petalinux', False)]).ljust(5))
                 cols.append('{0}'.format(to_edition[design['license']]).ljust(5))
                 cols.append('{0}'.format(to_ip[design.get('ip_license', False)]).ljust(5))
                 tables.append('| ' + ' | '.join(cols) + ' |')
@@ -106,7 +110,7 @@ def get_vivado_build_targets(data):
             template = templates[design['group']]
             lanes = '{'
             for lane in design['lanes']:
-                lanes += ' ' + lane
+                lanes += ' ' + str(lane)
             lanes += ' }'
             target = 'dict set target_dict {} {{ {} {} {} {} "{}" }}'.format(design['label'],design['url'],design['boardname'],
                 template,lanes,design['linkspeed'])
@@ -128,10 +132,7 @@ def get_petalinux_targets(data):
             # a two-port design (lanes=["0","1"]) picks up bsp/ports-versal-01/.
             # The overlay's port-config.dtsi only references the MRMAC / sfp
             # labels that the SDT generator actually produces for those ports.
-            if design['group'] == 'versal':
-                lanecfg = 'ports-versal-' + ''.join(design['lanes'])
-            else:
-                lanecfg = 'ports-' + ''.join(design['lanes'])
+            lanecfg = design.get('portcfg', '')
             template = templates[design['group']]
             target = '{}_target := {} {} {} {}'.format(design['label'],template,design['flashsize'],design['flashintf'],lanecfg)
             targets.append(target)
